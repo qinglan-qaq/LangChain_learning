@@ -1,0 +1,28 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Jupyter Notebook 检查点文件夹
+.ipynb_checkpoints/
+
+# PyCharm 运行时支持库（版本号会变化，使用通配符忽略）
+*-pycharm-support-libs/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+
+# PyCharm 相关
+.idea/
+*-pycharm-support-libs/
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv
+
+# 数据文件（可选）
+*.csv
+*.xlsx
+*.db
