@@ -1,0 +1,73 @@
+{
+  '_response_info': {
+    'raw_headers': {
+      'connection': 'keep-alive',
+      'content-length': '867',
+      'content-type': 'application/json',
+      'date': 'Mon, 13 Apr 2026 16:54:54 GMT',
+      'server': 'envoy',
+      'x-envoy-upstream-service-time': '631',
+      'x-pinecone-api-version': '2025-10',
+      'x-pinecone-max-indexed-lsn': '1',
+      'x-pinecone-response-duration-ms': '632'
+    }
+  },
+  'result': {
+    'hits': [
+      {
+        '_id': 'rec1',
+        '_score': 0.10650458931922913,
+        'fields': {
+          'category': 'history',
+          'chunk_text': 'The Eiffel Tower was completed '
+          'in 1889 and stands in Paris, '
+          'France.'
+        }
+      },
+      {
+        '_id': 'rec7',
+        '_score': 0.06278920918703079,
+        'fields': {
+          'category': 'history',
+          'chunk_text': 'The Great Wall of China was '
+          'built to protect against '
+          'invasions.'
+        }
+      },
+      {
+        '_id': 'rec5',
+        '_score': 3.21923362207599e-05,
+        'fields': {
+          'category': 'literature',
+          'chunk_text': 'Shakespeare wrote many famous '
+          'plays, including Hamlet and '
+          'Macbeth.'
+        }
+      },
+      {
+        '_id': 'rec4',
+        '_score': 1.6187581422855146e-05,
+        'fields': {
+          'category': 'biology',
+          'chunk_text': 'The mitochondrion is often '
+          'called the powerhouse of the '
+          'cell.'
+        }
+      },
+      {
+        '_id': 'rec3',
+        '_score': 1.5936620911816135e-05,
+        'fields': {
+          'category': 'science',
+          'chunk_text': 'Albert Einstein developed the '
+          'theory of relativity.'
+        }
+      }
+    ]
+  },
+  'usage': {
+    'embed_total_tokens': 8,
+    'read_units': 1,
+    'rerank_units': 1
+  }
+}
