@@ -11,6 +11,8 @@ __pycache__/
 # Jupyter Notebook
 .ipynb_checkpoints/
 
+# 环境变量
+.env
 
 # PyCharm 相关
 .idea/

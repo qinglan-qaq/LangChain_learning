@@ -1,0 +1,72 @@
+{
+  '_response_info': {
+    'raw_headers': {
+      'connection': 'keep-alive',
+      'content-length': '841',
+      'content-type': 'application/json',
+      'date': 'Mon, 13 Apr 2026 16:37:12 GMT',
+      'server': 'envoy',
+      'x-envoy-upstream-service-time': '319',
+      'x-pinecone-api-version': '2025-10',
+      'x-pinecone-max-indexed-lsn': '1',
+      'x-pinecone-response-duration-ms': '461'
+    }
+  },
+  'result': {
+    'hits': [
+      {
+        '_id': 'rec5',
+        '_score': 0.18146803975105286,
+        'fields': {
+          'category': 'literature',
+          'chunk_text': 'Shakespeare wrote many famous '
+          'plays, including Hamlet and '
+          'Macbeth.'
+        }
+      },
+      {
+        '_id': 'rec1',
+        '_score': 0.08277791738510132,
+        'fields': {
+          'category': 'history',
+          'chunk_text': 'The Eiffel Tower was completed '
+          'in 1889 and stands in Paris, '
+          'France.'
+        }
+      },
+      {
+        '_id': 'rec7',
+        '_score': 0.07829592376947403,
+        'fields': {
+          'category': 'history',
+          'chunk_text': 'The Great Wall of China was '
+          'built to protect against '
+          'invasions.'
+        }
+      },
+      {
+        '_id': 'rec3',
+        '_score': 0.05558488517999649,
+        'fields': {
+          'category': 'science',
+          'chunk_text': 'Albert Einstein developed the '
+          'theory of relativity.'
+        }
+      },
+      {
+        '_id': 'rec4',
+        '_score': 0.021381305530667305,
+        'fields': {
+          'category': 'biology',
+          'chunk_text': 'The mitochondrion is often '
+          'called the powerhouse of the '
+          'cell.'
+        }
+      }
+    ]
+  },
+  'usage': {
+    'embed_total_tokens': 8,
+    'read_units': 1
+  }
+}
