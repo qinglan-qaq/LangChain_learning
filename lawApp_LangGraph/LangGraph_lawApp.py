@@ -1,10 +1,10 @@
 import os
 from dotenv import load_dotenv
-from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.graph import StateGraph, START, END
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 
-from node import AgentState,Simple_llm_node
+from lawApp_LangGraph.node import AgentState,Simple_llm_node
 
 
 load_dotenv()
