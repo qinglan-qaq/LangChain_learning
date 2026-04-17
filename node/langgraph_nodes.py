@@ -76,3 +76,8 @@ def Simple_llm_node(state: AgentState) -> dict:
     # 实例化后传入state,得到dict结果
     response = llm_invoke(state)
     return response
+
+
+
+
+
