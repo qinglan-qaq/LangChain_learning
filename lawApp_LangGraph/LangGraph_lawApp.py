@@ -3,8 +3,8 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, START, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
-
-from lawApp_LangGraph.node import AgentState,Simple_llm_node
+from lawApp_LangGraph.node.langgraph_nodes import Simple_llm_node, AgentState
+from lawApp_LangGraph.tools.tools import get_google_search, send_email, markdown_to_pdf
 
 
 load_dotenv()
@@ -17,6 +17,7 @@ llm = ChatOpenAI(
     temperature=0.3
 )
 
+tools = [get_google_search, send_email, markdown_to_pdf]
 
 
 
@@ -31,23 +32,15 @@ builder.add_edge("Simple_chat_node", END)
 # 编译图
 graph = builder.compile()
 
-response = graph.stream({"messages": [HumanMessage(content="泥嚎,我有点累了")]})
+# 执行流式调用
+final_state = None
+for chunk in graph.stream({"messages": [HumanMessage(content="泥嚎,我有点累了")]}):
+    print(chunk)
+    final_state = chunk  # 不断更新，循环结束后 final_state 就是最后一个块
 
+# 从最终状态中提取消息和用量
+reply = final_state['messages'][-1].content
+usage = final_state['messages'][-1].response_metadata.get('token_usage', {})  # usage_metadata 可能不存在，这里从 response_metadata 取
 
-reply = response['messages'][-1].content
-usage = response['messages'][-1].usage_metadata
-
-
-print(f"AI回答:{reply}")
-print(f"AI用量:{usage}")
-
-
-
-
-
-
-
-
-
-
-
+print(f"AI回答: {reply}")
+print(f"AI用量: {usage}")

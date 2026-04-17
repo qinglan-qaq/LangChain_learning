@@ -1,10 +1,9 @@
 import os
 from datetime import datetime
-
+import markdown
 import pdfkit
 from langchain_community.utilities import SerpAPIWrapper
-from langchain_core.messages import tool
-
+from langchain_core.tools import tool
 
 @tool
 def get_google_search(query: str):
@@ -32,6 +31,7 @@ def get_google_search(query: str):
 def markdown_to_html(markdown_text: str) -> str:
     """将Markdown文本转换为HTML字符串，并启用表格等扩展功能"""
     # 'extra' 扩展支持了表格、围栏代码块等常用Markdown语法
+
     return markdown.markdown(markdown_text, extensions=['extra', 'codehilite'])
 
 
@@ -103,8 +103,12 @@ def markdown_to_pdf(markdown_text: str, filename: str = None) -> str:
 
 @tool
 def send_email(email: str = None) -> str:
-    """
+    """当用户要求发送邮件时
+    可以使用该工具发送消息
 
     :param email:
-    :return:
+    :return: 返回成功或者失败消息
     """
+
+
+

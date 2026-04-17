@@ -8,10 +8,13 @@ llm普通对话节点
 
 
 """
+from langgraph.graph import  END
 from typing import Annotated
 from langchain_core.messages import SystemMessage
 from langgraph.graph import add_messages
 from pydantic import BaseModel, Field, ConfigDict
+
+from lawApp_LangGraph.LangGraph_lawApp import llm
 
 
 class AgentState(BaseModel):
@@ -59,7 +62,6 @@ def My_router(state: AgentState):
     return END
 
 
-
 # 设置简单的大模型询问节点
 def Simple_llm_node(state: AgentState) -> dict:
     SYSTEM_PROMPT = """
@@ -77,7 +79,10 @@ def Simple_llm_node(state: AgentState) -> dict:
     response = llm_invoke(state)
     return response
 
+# 告别节点
+def farewell(state: AgentState) -> str:
 
+    return "使用完毕,再见~"
 
 
 
