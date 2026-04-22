@@ -6,7 +6,25 @@ from langchain_core.messages import HumanMessage
 from lawApp_LangGraph.node.langgraph_nodes import Simple_llm_node, AgentState
 from lawApp_LangGraph.tools.tools import get_google_search, send_email, markdown_to_pdf
 
+"""
 
+这里主要实现RouterRAG的流程
+用户提问 ->
+路由器分发判断 ->
+(简单问题) -> LLM直接回答
+(模糊问题) -> RAG检索 -> LLM回答
+(复杂问题) -> CRAG流程
+
+需要:
+路由节点(少样本LLM构建)
+LLM直接回答节点
+RAG检索节点
+CRAG节点(子图形式)
+条件边
+"""
+
+
+# 获取环境变量
 load_dotenv()
 
 # 初始化 LLM
@@ -18,6 +36,14 @@ llm = ChatOpenAI(
 )
 
 tools = [get_google_search, send_email, markdown_to_pdf]
+
+
+# 路由器,用来判断用户提问的复杂程度
+def Router_node(state: AgentState):
+
+    pass
+
+
 
 
 
