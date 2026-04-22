@@ -85,7 +85,6 @@ class RAG_service:
             add_start_index=True
         )
 
-
     def get_index_stats(self):
         """测试索引是否创建成功"""
         print(self.index.get_index_stats())
@@ -108,47 +107,42 @@ class RAG_service:
     以句子为单位,合成一大段
     
     """
+
     def add_document(
             self,
             file_path: str,
     ):
         # 加载获取
-        loader = TextLoader(file_path=file_path,encoding="utf-8")
+        loader = TextLoader(file_path=file_path, encoding="utf-8")
         documents = loader.load()
 
         # 按照一级标题切分
         for document in documents:
             chunks = self.md_splitter.split_document(document.page_content)
 
+        # 获取元数据
+        for chunk in chunks:
+            metadata = {}
 
-        """二次清洗,利用正则从文本中提取案由和字号，从路径提取年份"""
-        metadata = {}
+            # 提取年份：假设文件名或路径包含 202X
+            year_match = re.search(r"20\d{2}", chunk.page_content)
+            metadata["year"] = year_match.group(0) if year_match else "Unknown"
 
-        # 提取年份：假设文件名或路径包含 202X
-        year_match = re.search(r"20\d{2}", chunks)
-        metadata["year"] = year_match.group(0) if year_match else "Unknown"
+            # 提取裁判书字号
+            case_num_pattern = r'裁判书字号\s*[\n\\n\s]+\s*(.+?法院.+?号.+?判决书)'
+            case_num_match = re.search(case_num_pattern, chunk.page_content)
+            metadata["case_number"] = case_num_match.group(1).strip() if case_num_match else "未识别"
 
-        # 提取裁判书字号：匹配如（2023）最高法民终...号
-        case_num_pattern = r"（\d{4}）[\u4e00-\u9fa5]+\d+号"
-        case_num_match = re.search(case_num_pattern, text)
-        metadata["case_number"] = case_num_match.group(0) if case_num_match else "未识别"
+            # 提取案由：通常在字号之后，或者是特定的段落
+            # 这里建议根据你的文档具体格式调整正则
+            case_cause_pattern = r"案由[:：]\s*([\u4e00-\u9fa5]+)"
+            cause_match = re.search(case_cause_pattern, chunk.page_content)
+            metadata["case_cause"] = cause_match.group(1) if cause_match else "通用"
 
-        # 提取案由：通常在字号之后，或者是特定的段落
-        # 这里建议根据你的文档具体格式调整正则
-        case_cause_pattern = r"案由[:：]\s*([\u4e00-\u9fa5]+)"
-        cause_match = re.search(case_cause_pattern, text)
-        metadata["case_cause"] = cause_match.group(1) if cause_match else "通用"
-
-
-
-
-
-
-
-
-
+            print("metadata元数据", metadata)
 
         return None
+
 
 """
 
