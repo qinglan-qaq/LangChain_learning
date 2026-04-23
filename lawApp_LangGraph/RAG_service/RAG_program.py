@@ -103,22 +103,43 @@ class RAG_service:
     从[基本案情]到最后的内容提取
     以句子为单位,合成一大段
     
+    @:param 
+        file_path: 文件路径
+        namespace: 指定命名空间
+    @:return
     """
 
     def add_document(
             self,
             file_path: str,
+            namespace: str,
     ):
 
-        self.get_Documents(file_path=file_path)
+        records = self.get_Documents(file_path=file_path)
 
-        return None
+        # 指定
+        self.index.upsert_records(self, namespace, records)
+
+        return True
 
     """
-    获取目标文件的内容
-    清洗后的内容
-    获取其中的元数据
-    获取基本案情
+    添加文本到数据库中需要:
+    加载文本,
+    文本分块,
+    
+    具体实施:
+    (正则表达式)
+    将清洗好的文件加载
+    以每一个案例为单位
+    先提取元数据
+    (分块)
+    从[基本案情]到最后的内容提取
+    以句子为单位,合成一大段
+    
+    @:param file_path:
+    
+    @:return
+    
     """
 
     def get_Documents(self, file_path: str):
@@ -159,19 +180,12 @@ class RAG_service:
                 raw_content = facts_match.group(1)
                 # 去除空格、换行、制表符等所有空白字符，以及 # 符号
                 facts_cleaned = re.sub(r'\n+', '\n', raw_content).strip()  # 去除所有空白（空格、换行等）
-                facts_cleaned = facts_cleaned.replace('#', '')  # 去除所有 # 字符
-
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=512,
-                    chunk_overlap=50,
-                    separators=["\n\n", "\n", "。", "；", "！", "？", " ", ""],  # 优先按段落切
-                    add_start_index=True
-                )
+                facts_cleaned = facts_cleaned.replace('#', '')
 
                 # 插入Pinecone数据容器
                 Pinecone_records = []
 
-                chunks = text_splitter.split_text(facts_cleaned)
+                chunks = self.text_splitter.split_text(facts_cleaned)
 
                 for i, chunk in enumerate(chunks):
                     record_id = f"doc_chunk_{i}"
@@ -187,14 +201,16 @@ class RAG_service:
                     }
                     Pinecone_records.append(record)
 
-            return
+            return Pinecone_records
 
 
 """
 
+
+@:param query
+@:return
+
 """
-
-
 def search_documents(self, query: str):
     pass
 
