@@ -3,7 +3,6 @@ import re
 from dotenv import load_dotenv
 from langchain_community.document_loaders import TextLoader
 from pinecone import Pinecone, ServerlessSpec
-
 from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownTextSplitter, MarkdownHeaderTextSplitter
 
 """
@@ -71,9 +70,7 @@ class RAG_service:
 
         # md文档按照标题层级读取
         headers_to_split_on = [
-            ("#", "Header_1"),
-            # ("##", "Header_2"),
-            # ("###", "Header_3"),
+            ("#", "Header_1")
         ]
         self.md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
 
@@ -112,36 +109,85 @@ class RAG_service:
             self,
             file_path: str,
     ):
+
+        self.get_Documents(file_path=file_path)
+
+        return None
+
+    """
+    获取目标文件的内容
+    清洗后的内容
+    获取其中的元数据
+    获取基本案情
+    """
+
+    def get_Documents(self, file_path: str):
         # 加载获取
         loader = TextLoader(file_path=file_path, encoding="utf-8")
         documents = loader.load()
 
-        # 按照一级标题切分
-        for document in documents:
-            chunks = self.md_splitter.split_document(document.page_content)
+        for doc in documents:
+            # split_text 返回 List[Document]，每个 Document 对应一个一级标题下的内容块
+            articles = self.md_splitter.split_text(doc.page_content)
 
-        # 获取元数据
-        for chunk in chunks:
+        for i, article in enumerate(articles):
+
             metadata = {}
 
             # 提取年份：假设文件名或路径包含 202X
-            year_match = re.search(r"20\d{2}", chunk.page_content)
-            metadata["year"] = year_match.group(0) if year_match else "Unknown"
+            year_match = re.search(r"20\d{2}", article.page_content)
+            if year_match:
+                metadata["year"] = year_match.group(0) if year_match else "Unknown"
 
-            # 提取裁判书字号
-            case_num_pattern = r'裁判书字号\s*[\n\\n\s]+\s*(.+?法院.+?号.+?判决书)'
-            case_num_match = re.search(case_num_pattern, chunk.page_content)
-            metadata["case_number"] = case_num_match.group(1).strip() if case_num_match else "未识别"
+                # 提取裁判书字号：匹配如（2023）最高法民终...号
+                case_num_pattern = r'裁判书字号[\s\\n]+((?:(?!裁判书字号)[\s\S])+?法院[\s\S]+?书)'
+                case_num_match = re.search(case_num_pattern, article.page_content)
 
-            # 提取案由：通常在字号之后，或者是特定的段落
-            # 这里建议根据你的文档具体格式调整正则
-            case_cause_pattern = r"案由[:：]\s*([\u4e00-\u9fa5]+)"
-            cause_match = re.search(case_cause_pattern, chunk.page_content)
-            metadata["case_cause"] = cause_match.group(1) if cause_match else "通用"
+                metadata["case_number"] = case_num_match.group(1).strip() if case_num_match else "未识别"
 
-            print("metadata元数据", metadata)
+                # 提取案由：通常在字号之后，或者是特定的段落
+                case_cause_pattern = r"案由[:：]\s*([\u4e00-\u9fa5]+)"
+                cause_match = re.search(case_cause_pattern, article.page_content)
 
-        return None
+                metadata["case_cause"] = cause_match.group(1) if cause_match else "通用"
+
+                # 提取基本案情
+                facts_pattern = r'【基本案情】\s*([\s\S]+?)(?=\n【|$)'
+                facts_match = re.search(facts_pattern, article.page_content)
+
+                # 获取捕获组内容（不含【基本案情】）
+                raw_content = facts_match.group(1)
+                # 去除空格、换行、制表符等所有空白字符，以及 # 符号
+                facts_cleaned = re.sub(r'\n+', '\n', raw_content).strip()  # 去除所有空白（空格、换行等）
+                facts_cleaned = facts_cleaned.replace('#', '')  # 去除所有 # 字符
+
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=512,
+                    chunk_overlap=50,
+                    separators=["\n\n", "\n", "。", "；", "！", "？", " ", ""],  # 优先按段落切
+                    add_start_index=True
+                )
+
+                # 插入Pinecone数据容器
+                Pinecone_records = []
+
+                chunks = text_splitter.split_text(facts_cleaned)
+
+                for i, chunk in enumerate(chunks):
+                    record_id = f"doc_chunk_{i}"
+
+                    record = {
+                        "id": record_id,
+                        "values": [],  # 这里后续需要填入 embedding_model.embed_query(chunk) 的结果
+                        "metadata": {
+                            **metadata,  # 展开原始元数据
+                            "text": chunk,  # 必须把原始文本存入 metadata，否则检索后拿不到原文
+                            "chunk_index": i  # 记录分块序号
+                        }
+                    }
+                    Pinecone_records.append(record)
+
+            return
 
 
 """
