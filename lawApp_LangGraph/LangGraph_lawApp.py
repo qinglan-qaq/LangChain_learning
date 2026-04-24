@@ -34,10 +34,26 @@ tools = [get_google_search, send_email, markdown_to_pdf]
 
 # 路由器,用来判断用户提问的复杂程度
 def Router_node(state: AgentState):
+    last_message = state["messages"][-1]
+
+    content = last_message.content.lower()
+
+    if "简单问题" or "simple" in content:
+        return "llm_node"
+
+    if "中等问题" or "normal" in content:
+        return "RAG_node"
+
+    if "困难问题" or "hard" in content:
+        return "CRAG_node"
+
+
 
     pass
 
+def RAG_node(state: AgentState):
 
+    pass
 
 
 
@@ -45,6 +61,9 @@ builder = StateGraph(AgentState)
 
 # 添加节点
 builder.add_node("Simple_chat_node", Simple_llm_node)
+builder.add_node("Router", Router_node)
+builder.add_node("RAG", RAG_node)
+
 
 builder.add_edge(START, "Simple_chat_node")
 builder.add_edge("Simple_chat_node", END)
