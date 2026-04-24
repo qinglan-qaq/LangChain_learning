@@ -51,8 +51,6 @@ def markdown_to_pdf(markdown_text: str, filename: str = None) -> str:
     :param filename:
     :return:
     """
-
-
     # 生成文件名
     if not filename:
         filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"

@@ -14,7 +14,7 @@ CRAG流程:
 import os
 
 from langchain_openai import ChatOpenAI
-from langgraph.graph import  END
+from langgraph.graph import END
 from typing import Annotated
 from langchain_core.messages import SystemMessage
 from langgraph.graph import add_messages
@@ -27,6 +27,7 @@ llm = ChatOpenAI(
     openai_api_base=os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com'),
     temperature=0.3
 )
+
 
 class AgentState(BaseModel):
     # 消息列表，支持追加消息
@@ -59,7 +60,6 @@ class LLM_Invoke:
 
 # 路由跳转节点
 def My_router(state: AgentState):
-
     last_message = state.messages[-1].content
 
     # 判断是否存在工具调用
@@ -90,10 +90,27 @@ def Simple_llm_node(state: AgentState) -> dict:
     response = llm_invoke(state)
     return response
 
+
+def Evaluate_llm(state: AgentState) -> dict:
+    # 带内部分级标准的提示词
+    system_prompt = """You are a document relevance evaluator. Assess whether the retrieved document can help answer the user's question.
+
+    Scoring criteria:
+    - 1.0: Document directly and specifically answers the question with detailed information
+    - 0.7-0.9: Document is moderately relevant with useful related information
+    - 0.4-0.6: Document is slightly relevant but contains some useful context
+    - 0.0-0.3: Document is irrelevant and unrelated to the question
+
+    Output format: Return a JSON with 'score' (float 0.0-1.0) and 'reason' (brief explanation)."""
+
+    # 创建实例,注意参数的顺序
+    llm_invoke = LLM_Invoke(llm, system_prompt)
+
+    # 注意这里可能不需要前者的信息
+    response = llm_invoke(state)
+    return response
+
+
 # 告别节点
 def farewell(state: AgentState) -> str:
-
     return "使用完毕,再见~"
-
-
-
