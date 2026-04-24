@@ -27,13 +27,7 @@ CRAG节点(子图形式)
 # 获取环境变量
 load_dotenv()
 
-# 初始化 LLM
-llm = ChatOpenAI(
-    model=os.getenv('DEEPSEEK_MODEL', 'deepseek-chat'),
-    openai_api_key=os.getenv('DEEPSEEK_API_KEY'),
-    openai_api_base=os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com'),
-    temperature=0.3
-)
+
 
 tools = [get_google_search, send_email, markdown_to_pdf]
 

@@ -3,7 +3,7 @@ import re
 from dotenv import load_dotenv
 from langchain_community.document_loaders import TextLoader
 from pinecone import Pinecone, ServerlessSpec
-from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownTextSplitter, MarkdownHeaderTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
 
 """
 RAG流程:
@@ -47,27 +47,6 @@ class RAG_service:
         # 选择嵌入模型
         self.embeding_model = embeding_model
 
-        # 初始化 Pinecone 客户端
-        self.pc = Pinecone(api_key=self.api_key)
-
-        # 3. 检查索引是否存在，如果不存在则创建
-        if self.index_name not in self.pc.list_indexes().names():
-            print(f"正在创建索引: {self.index_name}...")
-            self.pc.create_index(
-                name=self.index_name,
-                dimension=self.dimension,
-                metric=self.metric,
-                spec=ServerlessSpec(
-                    cloud=self.cloud,
-                    region=self.region
-                )
-            )
-
-        # 4. 初始化并保存索引操作对象
-        self.index = self.pc.Index(self.index_name)
-
-        print(f"索引 '{self.index_name}' 已就绪。")
-
         # md文档按照标题层级读取
         headers_to_split_on = [
             ("#", "Header_1")
@@ -82,27 +61,51 @@ class RAG_service:
             add_start_index=True
         )
 
+    def create_index(self):
+        # 初始化 Pinecone 客户端
+        self.pc = Pinecone(api_key=self.api_key)
+
+        # 3. 检查索引是否存在，如果不存在则创建
+        if self.index_name not in self.pc.list_indexes().names():
+            print(f"正在创建索引: {self.index_name}...")
+            self.pc.create_index(
+                name=self.index_name,
+                dimension=self.dimension,
+                metric=self.metric,
+                spec=ServerlessSpec(
+                    cloud=self.cloud,
+                    region=self.region
+                ),
+                embed={
+                    "model": "llama-text-embed-v2",
+                    "field_map": {
+                        "id": "id",
+                        "text": "chunk_text",
+                        "metadata": [
+                            "chunk_index",
+                            "year",
+                            "case_number",
+                            "case_cause"
+                        ]
+                    }
+                }
+            )
+
+        # 4. 初始化并保存索引操作对象
+        self.index = self.pc.Index(self.index_name)
+
+        print(f"索引 '{self.index_name}' 已就绪。")
+
+        return True
+
+
     def get_index_stats(self):
         """测试索引是否创建成功"""
         print(self.index.get_index_stats())
         return True
 
     """
-    添加文本到数据库中需要:
-    加载文本,
-    文本分块,
-    向量化
-    插入数据到namespace
-    
-    具体实施:
-    (正则表达式)
-    将清洗好的文件加载
-    以每一个案例为单位
-    先提取元数据
-    (分块)
-    从[基本案情]到最后的内容提取
-    以句子为单位,合成一大段
-    
+    添加分块好的文本到数据库中    
     @:param 
         file_path: 文件路径
         namespace: 指定命名空间
@@ -117,7 +120,7 @@ class RAG_service:
 
         records = self.get_Documents(file_path=file_path)
 
-        # 指定
+        # 指定命名空间添加数据
         self.index.upsert_records(self, namespace, records)
 
         return True
@@ -176,7 +179,7 @@ class RAG_service:
                 facts_pattern = r'【基本案情】\s*([\s\S]+?)(?=\n【|$)'
                 facts_match = re.search(facts_pattern, article.page_content)
 
-                # 获取捕获组内容（不含【基本案情】）
+                # 获取捕获组内容
                 raw_content = facts_match.group(1)
                 # 去除空格、换行、制表符等所有空白字符，以及 # 符号
                 facts_cleaned = re.sub(r'\n+', '\n', raw_content).strip()  # 去除所有空白（空格、换行等）
@@ -203,32 +206,37 @@ class RAG_service:
 
             return Pinecone_records
 
+    """
+    接受问题
+    实现检索
+    混合检索(语义+关键字)
+    实现重排序
+    
+    
+    @:param query
+    @:return
+    
+    """
 
-"""
+    def search_documents(self, query: str):
 
-
-@:param query
-@:return
-
-"""
-def search_documents(self, query: str):
-    pass
+        return
 
 
 load_dotenv()
 
 # 实例化测试
 service = RAG_service(
-    index_name="my-rag-index",
+    index_name="Pinecone_test_lawApp",
     api_key=os.getenv("PINECONE_API_KEY"),
     metric="cosine",
     cloud="aws",
     region="us-east-1",
-    dimension=1536,  # OpenAI text-embedding-3-small 默认维度
-    embeding_model="text-embedding-3-small"
+    dimension=1024,
 )
+service.get_index_stats()
 
-service.add_document(
-    "lawApp_LangGraph/MarkDownFiles/中国法院2019年度案例：婚姻家庭与继承纠纷.md",
-    encoding="utf-8"
-)
+# service.add_document(
+#     "lawApp_LangGraph/MarkDownFiles/中国法院2019年度案例：婚姻家庭与继承纠纷.md",
+#     encoding="utf-8"
+# )

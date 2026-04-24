@@ -5,17 +5,28 @@ TODO:
 大模型判断节点
 RAG检索节点
 llm普通对话节点
-
+路由器少样本llm
+CRAG流程:
+    RAG检索
+    llm评估
 
 """
+import os
+
+from langchain_openai import ChatOpenAI
 from langgraph.graph import  END
 from typing import Annotated
 from langchain_core.messages import SystemMessage
 from langgraph.graph import add_messages
 from pydantic import BaseModel, Field, ConfigDict
 
-from lawApp_LangGraph.LangGraph_lawApp import llm
-
+# 初始化 LLM
+llm = ChatOpenAI(
+    model=os.getenv('DEEPSEEK_MODEL', 'deepseek-chat'),
+    openai_api_key=os.getenv('DEEPSEEK_API_KEY'),
+    openai_api_base=os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com'),
+    temperature=0.3
+)
 
 class AgentState(BaseModel):
     # 消息列表，支持追加消息
