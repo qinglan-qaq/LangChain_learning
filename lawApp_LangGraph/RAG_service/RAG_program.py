@@ -264,11 +264,11 @@ class RAG_service:
     
     """
 
-    def _dense_search(self, query, namespace, top_k=50):
+    def dense_search(self, query, namespace, top_k=50):
         query_vec = self.embeddings.embed_query(query)
         return self.index.query(vector=query_vec, top_k=top_k, namespace=namespace, include_metadata=True).matches
 
-    def _sparse_search(self, query, namespace, top_k=50):
+    def sparse_search(self, query, namespace, top_k=50):
         query_sparse = self.bm25.encode_queries(query)
         return self.index.query(sparse_vector=query_sparse, top_k=top_k, namespace=namespace,
                                 include_metadata=True).matches
@@ -281,18 +281,10 @@ class RAG_service:
     ):
 
         # 密集向量语义查询
-        dense_matches = self.index.query(
-            query=query,
-            namespace=namespace,
-            top_k=top_k
-        )
+        dense_matches = self.dense_search(query, namespace, top_k)
 
         # 稀疏向量 关键字查询
-        sparse_matches = self.index.query(
-            query=query,
-            namespace=namespace,
-            top_k=top_k
-        )
+        sparse_matches = self.sparse_search(query, namespace, top_k)
 
         # RRF融合算法
         fused = self.rrf_fusion([dense_matches, sparse_matches], k=60, top_n=top_k)
