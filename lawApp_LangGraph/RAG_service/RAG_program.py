@@ -59,6 +59,14 @@ class RAG_service:
             add_start_index=True
         )
 
+    """
+    创建索引
+    创建混合索引
+    指定的索引方式
+    @:param wait_for_completion
+    @:return boolean
+    """
+
     def create_index(self, wait_for_completion: bool = True) -> bool:
         self.pc = Pinecone(api_key=self.api_key)
 
@@ -75,10 +83,8 @@ class RAG_service:
                 spec=ServerlessSpec(cloud=self.cloud, region=self.region),
                 vector_type="dense",
             )
-
         else:
             print(f"索引 '{self.index_name}' 已存在。")
-
         # 等待索引就绪 异步处理
         if wait_for_completion:
             while not self.pc.describe_index(self.index_name).status.get("ready", False):
@@ -90,12 +96,16 @@ class RAG_service:
 
         return True
 
+    """
+    获取索引是否创建成功
+    测试索引是否创建成功并打印统计信息
+    """
+
     def get_index_stats(self):
-        """测试索引是否创建成功"""
-        print(self.index.get_index_stats())
+
+        stats = self.index.describe_index_stats()
+        print("当前索引的状态: ",stats)
         return True
-
-
 
     """
     添加文本到数据库中需要:
@@ -221,10 +231,12 @@ class RAG_service:
         records = self.get_Documents(file_path=file_path)
 
         # 指定命名空间添加数据
-        self.pc
+        self.index.upsert(
+            vectors=records,
+            namespace=namespace,
+        )
 
         return True
-
 
     """
     接受问题
@@ -254,7 +266,6 @@ service = RAG_service(
 )
 service.create_index()
 
-service.add_document()
+service.get_index_stats()
 
 
-print(service.pc.describe_index("pinecone-test-lawapp"))
