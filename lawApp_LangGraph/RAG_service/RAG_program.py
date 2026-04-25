@@ -1,4 +1,6 @@
 import os
+from typing import Any
+
 from dotenv import load_dotenv
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
@@ -44,15 +46,15 @@ class RAG_service:
         self.cloud = cloud
         self.region = region
         self.dimension = dimension
-        self.pc = None
-        self.index = None
+        self.pc = Pinecone(api_key=api_key)
+        self.index = self.pc.Index(self.index_name)
 
         headers_to_split_on = [("#", "Header_1")]
 
         self.md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=120,
+            chunk_size=512,
+            chunk_overlap=50,
             separators=["\n\n", "\n", "。", "；", " "],
             add_start_index=True
         )
@@ -93,26 +95,7 @@ class RAG_service:
         print(self.index.get_index_stats())
         return True
 
-    """
-    添加分块好的文本到数据库中    
-    @:param 
-        file_path: 文件路径
-        namespace: 指定命名空间
-    @:return
-    """
 
-    def add_document(
-            self,
-            file_path: str,
-            namespace: str,
-    ):
-
-        records = self.get_Documents(file_path=file_path)
-
-        # 指定命名空间添加数据
-        self.index.upsert_records(self, namespace, records)
-
-        return True
 
     """
     添加文本到数据库中需要:
@@ -128,22 +111,18 @@ class RAG_service:
     从[基本案情]到最后的内容提取
     以句子为单位,合成一大段
     
-    @:param file_path:
-    
-    @:return
-    
+    @:param file_path:str
+    @:return 符合输入格式的列表
     """
 
-    def get_Documents(self, file_path: str):
+    def get_Documents(self, file_path: str) -> list[Any] | None:
+
         # 加载获取
+        global articles, metadata, facts_cleaned
         loader = TextLoader(
-            "lawApp_LangGraph/MarkDownFiles/中国法院2019年度案例：婚姻家庭与继承纠纷.md",
+            file_path,
             encoding="utf-8"
         )
-
-        headers_to_split_on = [("#", "Header_1")]
-
-        md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
 
         # 加载一次之后可以反复使用
         # 稀疏向量
@@ -153,11 +132,12 @@ class RAG_service:
         model_name = "BAAI/bge-large-zh-v1.5"
         embeddings = HuggingFaceEmbeddings(model_name=model_name, encode_kwargs={'normalize_embeddings': True})
 
+        # 默认读取的为Document形式
         documents = loader.load()
 
         for doc in documents:
             # split_text 返回 List[Document]，每个 Document 对应一个一级标题下的内容块
-            articles = md_splitter.split_text(doc.page_content)
+            articles = self.md_splitter.split_text(doc.page_content)
 
         # 获取元数据和正文内容
         for i, article in enumerate(articles):
@@ -191,17 +171,10 @@ class RAG_service:
                 facts_cleaned = re.sub(r'\n+', '\n', raw_content).strip()  # 去除所有空白（空格、换行等）
                 facts_cleaned = facts_cleaned.replace('#', '')  # 去除所有 # 字符
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=512,
-            chunk_overlap=50,
-            separators=["\n\n", "\n", "。", "；", "！", "？", " ", ""],  # 优先按段落切
-            add_start_index=True
-        )
-
         # 插入Pinecone数据容器
         Pinecone_records = []
 
-        chunks = text_splitter.split_text(facts_cleaned)
+        chunks = self.text_splitter.split_text(facts_cleaned)
 
         for i, chunk in enumerate(chunks):
             record_id = f"doc_chunk_{i}"
@@ -212,8 +185,10 @@ class RAG_service:
             # 返回 {"indices": [...], "values": [...]}
             sparse_vector = bm25.encode_documents(chunk)
 
-            #
-            """添加内容: id 向量数据 元数据:{年份 判决书 案由 文档切片}"""
+            """
+            添加内容: id 向量数据 元数据:{年份 判决书 案由 文档切片}
+            符合Pinecone的输入格式
+            """
             record = {
                 "id": record_id,
                 "chunk_index": i,
@@ -224,11 +199,32 @@ class RAG_service:
                     "chunk_text": chunk,
                 }
             }
-            if i == 10:
-                break
+
             Pinecone_records.append(record)
 
             return Pinecone_records
+
+    """
+        添加分块好的文本到数据库中    
+        @:param 
+            file_path: 文件路径
+            namespace: 指定命名空间
+        @:return 
+        """
+
+    def add_document(
+            self,
+            file_path: str,
+            namespace: str,
+    ):
+
+        records = self.get_Documents(file_path=file_path)
+
+        # 指定命名空间添加数据
+        self.pc
+
+        return True
+
 
     """
     接受问题
@@ -258,10 +254,7 @@ service = RAG_service(
 )
 service.create_index()
 
+service.add_document()
+
+
 print(service.pc.describe_index("pinecone-test-lawapp"))
-
-
-# service.add_document(
-#     "lawApp_LangGraph/MarkDownFiles/中国法院2019年度案例：婚姻家庭与继承纠纷.md",
-#     encoding="utf-8"
-# )
