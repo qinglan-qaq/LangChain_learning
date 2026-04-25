@@ -7,6 +7,10 @@ from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharac
 import re
 from langchain_huggingface import HuggingFaceEmbeddings
 from pinecone_text.sparse import BM25Encoder
+import time
+from pinecone import Pinecone, ServerlessSpec
+from flagembedding import FlagReranker
+from torch.fx.experimental.optimization import fuse
 
 """
 RAG流程:
@@ -28,9 +32,6 @@ RAG流程:
 
 """
 
-import time
-from pinecone import Pinecone, ServerlessSpec
-
 
 class RAG_service:
     def __init__(
@@ -49,14 +50,27 @@ class RAG_service:
         self.pc = Pinecone(api_key=api_key)
         self.index = self.pc.Index(self.index_name)
 
+        # 初始化工具
         headers_to_split_on = [("#", "Header_1")]
 
         self.md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
+
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=512,
             chunk_overlap=50,
             separators=["\n\n", "\n", "。", "；", " "],
             add_start_index=True
+        )
+
+        self.reranker = FlagReranker('BAAI/bge-reranker-large', use_fp16=True)
+
+        bm25 = BM25Encoder().load("../lawApp_LangGraph/RAG_service/bm25_law_params.json")
+
+        # 密集向量
+        model_name = "BAAI/bge-large-zh-v1.5"
+        embeddings = HuggingFaceEmbeddings(
+            model_name=model_name,
+            encode_kwargs={'normalize_embeddings': True}
         )
 
     """
@@ -104,7 +118,7 @@ class RAG_service:
     def get_index_stats(self):
 
         stats = self.index.describe_index_stats()
-        print("当前索引的状态: ",stats)
+        print("当前索引的状态: ", stats)
         return True
 
     """
@@ -250,9 +264,43 @@ class RAG_service:
     
     """
 
-    def search_documents(self, query: str):
+    def _dense_search(self, query, namespace, top_k=50):
+        query_vec = self.embeddings.embed_query(query)
+        return self.index.query(vector=query_vec, top_k=top_k, namespace=namespace, include_metadata=True).matches
 
-        return
+    def _sparse_search(self, query, namespace, top_k=50):
+        query_sparse = self.bm25.encode_queries(query)
+        return self.index.query(sparse_vector=query_sparse, top_k=top_k, namespace=namespace,
+                                include_metadata=True).matches
+
+    def search_documents(
+            self, query: str,
+            namespace: str,
+            top_k: int = 50,
+            top_n: int = 10
+    ):
+
+        # 密集向量语义查询
+        dense_matches = self.index.query(
+            query=query,
+            namespace=namespace,
+            top_k=top_k
+        )
+
+        # 稀疏向量 关键字查询
+        sparse_matches = self.index.query(
+            query=query,
+            namespace=namespace,
+            top_k=top_k
+        )
+
+        # RRF融合算法
+        fused = self.rrf_fusion([dense_matches, sparse_matches], k=60, top_n=top_k)
+
+        # 融合后重排序结果
+        rerank_result = self.reranker(query, fused, top_n)
+
+        return rerank_result
 
 
 load_dotenv()
@@ -267,5 +315,3 @@ service = RAG_service(
 service.create_index()
 
 service.get_index_stats()
-
-
