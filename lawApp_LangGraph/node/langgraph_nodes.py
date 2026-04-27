@@ -114,3 +114,32 @@ def Evaluate_llm(state: AgentState) -> dict:
 # 告别节点
 def farewell(state: AgentState) -> str:
     return "使用完毕,再见~"
+
+
+
+# 路由器,用来判断用户提问的复杂程度
+def Router_node(state: AgentState):
+
+    last_message = state["messages"][-1]
+
+    content = last_message.content.lower()
+
+    if "简单问题" or "simple" in content:
+        return "llm_node"
+
+    if "中等问题" or "normal" in content:
+        return "RAG_node"
+
+    if "困难问题" or "hard" in content:
+        return "CRAG_node"
+
+    return
+
+
+def RAG_node(state: AgentState):
+    pass
+
+
+def Evalue_func():
+    pass
+
