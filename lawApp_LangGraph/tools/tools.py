@@ -17,7 +17,7 @@ def get_google_search(query: str):
 
     # 格式化输出，方便 LLM 阅读
     formatted_results = []
-    for res in results.get("organic_results", [])[:5]:  # 取前5条
+    for res in results.get("organic_results", [])[:5]:
         formatted_results.append(
             f"标题: {res.get('title')}\n摘要: {res.get('snippet')}\n链接: {res.get('link')}\n---"
         )
@@ -100,11 +100,11 @@ def markdown_to_pdf(markdown_text: str, filename: str = None) -> str:
 
 
 @tool
-def send_email(email: str = None) -> str:
+def send_email(email_address: str = None) -> str:
     """当用户要求发送邮件时
     可以使用该工具发送消息
 
-    :param email:
+    :param email_address:str
     :return: 返回成功或者失败消息
     """
 

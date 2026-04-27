@@ -9,8 +9,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from pinecone_text.sparse import BM25Encoder
 import time
 from pinecone import Pinecone, ServerlessSpec
-from flagembedding import FlagReranker
-from torch.fx.experimental.optimization import fuse
+from FlagEmbedding import FlagReranker
 
 """
 RAG流程:
@@ -64,11 +63,11 @@ class RAG_service:
 
         self.reranker = FlagReranker('BAAI/bge-reranker-large', use_fp16=True)
 
-        bm25 = BM25Encoder().load("../lawApp_LangGraph/RAG_service/bm25_law_params.json")
+        self.bm25 = BM25Encoder().load("../lawApp_LangGraph/RAG_service/bm25_law_params.json")
 
         # 密集向量
         model_name = "BAAI/bge-large-zh-v1.5"
-        embeddings = HuggingFaceEmbeddings(
+        self.embeddings = HuggingFaceEmbeddings(
             model_name=model_name,
             encode_kwargs={'normalize_embeddings': True}
         )
@@ -143,6 +142,10 @@ class RAG_service:
 
         # 加载获取
         global articles, metadata, facts_cleaned
+
+        # 插入Pinecone数据容器
+        Pinecone_records = []
+
         loader = TextLoader(
             file_path,
             encoding="utf-8"
@@ -163,69 +166,71 @@ class RAG_service:
             # split_text 返回 List[Document]，每个 Document 对应一个一级标题下的内容块
             articles = self.md_splitter.split_text(doc.page_content)
 
-        # 获取元数据和正文内容
-        for i, article in enumerate(articles):
+            # 获取元数据和正文内容
+            for i, article in enumerate(articles):
 
-            metadata = {}
+                print(f'正在处理第{i}文章')
 
-            # 提取年份：假设文件名或路径包含 202X
-            year_match = re.search(r"20\d{2}", article.page_content)
-            if year_match:
-                metadata["year"] = year_match.group(0) if year_match else "Unknown"
+                metadata = {}
 
-                # 提取裁判书字号：匹配如（2023）最高法民终...号
-                case_num_pattern = r'裁判书字号[\s\\n]+((?:(?!裁判书字号)[\s\S])+?法院[\s\S]+?书)'
-                case_num_match = re.search(case_num_pattern, article.page_content)
+                # 提取年份：假设文件名或路径包含 202X
+                year_match = re.search(r"20\d{2}", article.page_content)
+                if year_match:
+                    metadata["year"] = year_match.group(0) if year_match else "Unknown"
 
-                metadata["case_number"] = case_num_match.group(1).strip() if case_num_match else "未识别"
+                    # 提取裁判书字号：匹配如（2023）最高法民终...号
+                    case_num_pattern = r'裁判书字号[\s\\n]+((?:(?!裁判书字号)[\s\S])+?法院[\s\S]+?书)'
+                    case_num_match = re.search(case_num_pattern, article.page_content)
 
-                # 提取案由：通常在字号之后，或者是特定的段落
-                case_cause_pattern = r"案由[:：]\s*([\u4e00-\u9fa5]+)"
-                cause_match = re.search(case_cause_pattern, article.page_content)
+                    metadata["case_number"] = case_num_match.group(1).strip() if case_num_match else "未识别"
 
-                metadata["case_cause"] = cause_match.group(1) if cause_match else "通用"
+                    # 提取案由：通常在字号之后，或者是特定的段落
+                    case_cause_pattern = r"案由[:：]\s*([\u4e00-\u9fa5]+)"
+                    cause_match = re.search(case_cause_pattern, article.page_content)
 
-                # 提取基本案情
-                facts_pattern = r'【基本案情】\s*([\s\S]+?)(?=\n【|$)'
-                facts_match = re.search(facts_pattern, article.page_content)
+                    metadata["case_cause"] = cause_match.group(1) if cause_match else "通用"
 
-                # 获取捕获组内容（不含【基本案情】）
-                raw_content = facts_match.group(1)
-                # 去除空格、换行、制表符等所有空白字符，以及 # 符号
-                facts_cleaned = re.sub(r'\n+', '\n', raw_content).strip()  # 去除所有空白（空格、换行等）
-                facts_cleaned = facts_cleaned.replace('#', '')  # 去除所有 # 字符
+                    # 提取基本案情
+                    facts_pattern = r'【基本案情】\s*([\s\S]+?)(?=\n【|$)'
+                    facts_match = re.search(facts_pattern, article.page_content)
 
-        # 插入Pinecone数据容器
-        Pinecone_records = []
+                    # 获取捕获组内容（不含【基本案情】）
+                    raw_content = facts_match.group(1)
+                    # 去除空格、换行、制表符等所有空白字符，以及 # 符号
+                    facts_cleaned = re.sub(r'\n+', '\n', raw_content).strip()  # 去除所有空白（空格、换行等）
+                    facts_cleaned = facts_cleaned.replace('#', '')  # 去除所有 # 字符
 
-        chunks = self.text_splitter.split_text(facts_cleaned)
+                    chunks = self.text_splitter.split_text(facts_cleaned)
 
-        for i, chunk in enumerate(chunks):
-            record_id = f"doc_chunk_{i}"
+                    for chunk_id, chunk in enumerate(chunks):
+                        record_id = f"Docu{i}_chunk{chunk_id}"
 
-            # 密集向量和稀疏向量
-            dense_vector = embeddings.embed_query(chunk)
+                        # 密集向量和稀疏向量
+                        dense_vector = embeddings.embed_query(chunk)
 
-            # 返回 {"indices": [...], "values": [...]}
-            sparse_vector = bm25.encode_documents(chunk)
+                        # 返回 {"indices": [...], "values": [...]}
+                        sparse_vector = bm25.encode_documents(chunk)
 
-            """
-            添加内容: id 向量数据 元数据:{年份 判决书 案由 文档切片}
-            符合Pinecone的输入格式
-            """
-            record = {
-                "id": record_id,
-                "chunk_index": i,
-                "values": dense_vector,  # 稠密向量列表 [0.12, -0.34, ...]
-                "sparse_values": sparse_vector,  # 稀疏向量字典
-                "metadata": {
-                    **metadata,
-                    "chunk_text": chunk,
-                }
-            }
+                        """
+                        添加内容: id 向量数据 元数据:{年份 判决书 案由 文档切片}
+                        符合Pinecone的输入格式
+                        """
+                        record = {
+                            "id": record_id,
 
-            Pinecone_records.append(record)
+                            "values": dense_vector,  # 稠密向量列表 [0.12, -0.34, ...]
+                            "sparse_values": sparse_vector,  # 稀疏向量字典
+                            "metadata": {
+                                "chunk_index": chunk_id,
+                                **metadata,
+                                "chunk_text": chunk,
+                            }
+                        }
+                        print(f'第{chunk_id}个record组装完毕')
 
+                        Pinecone_records.append(record)
+                print("\n")
+                print(f'第{i}文章处理完毕,已经添加至record中\n')
             return Pinecone_records
 
     """
@@ -242,13 +247,19 @@ class RAG_service:
             namespace: str,
     ):
 
-        records = self.get_Documents(file_path=file_path)
+        Pinecone_records = self.get_Documents(file_path=file_path)
 
-        # 指定命名空间添加数据
-        self.index.upsert(
-            vectors=records,
-            namespace=namespace,
-        )
+        # 分批上传，每批最多 50 条向量
+        batch_size = 50
+        total = len(Pinecone_records)
+
+        for i in range(0, total, batch_size):
+            batch = Pinecone_records[i:i + batch_size]
+            self.index.upsert(vectors=batch, namespace="Law_test_namespace")
+            uploaded = min(i + batch_size, total)
+            print(f"已上传 {uploaded}/{total} 条记录")
+
+        print(self.pc.describe_index("pinecone-test-lawapp"))
 
         return True
 
@@ -273,8 +284,47 @@ class RAG_service:
         return self.index.query(sparse_vector=query_sparse, top_k=top_k, namespace=namespace,
                                 include_metadata=True).matches
 
+    """
+    results_lists: 多个 match 列表，每个 match 对象必须有 id 属性
+    k: RRF 常数，通常取 60
+    返回：按融合分数降序排列的 match 列表
+    """
+
+    def rrf_fusion(
+            self,
+            results_lists: list[list],
+            k: int = 60,
+            top_n: int = 10
+    ):
+
+        score_dict = {}
+        id_to_match = {}
+
+        for lst in results_lists:
+            for rank, match in enumerate(lst):
+                doc_id = match.id
+                # RRF计算公式 分数累加： 1 / (k + rank + 1)
+                rrf_score = 1.0 / (k + rank + 1)
+                score_dict[doc_id] = score_dict.get(doc_id, 0.0) + rrf_score
+                id_to_match[doc_id] = match
+
+        # 按融合分数降序排序
+        sorted_ids = sorted(
+            score_dict.keys(),
+            key=lambda x: score_dict[x],
+            reverse=True
+        )
+        final_matches = []
+        for doc_id in sorted_ids[:top_n]:
+            match = id_to_match[doc_id]
+            match.rrf_score = score_dict[doc_id]
+            final_matches.append(match)
+
+        return final_matches
+
     def search_documents(
-            self, query: str,
+            self,
+            query: str,
             namespace: str,
             top_k: int = 50,
             top_n: int = 10
@@ -291,6 +341,7 @@ class RAG_service:
 
         # 融合后重排序结果
         rerank_result = self.reranker(query, fused, top_n)
+
 
         return rerank_result
 

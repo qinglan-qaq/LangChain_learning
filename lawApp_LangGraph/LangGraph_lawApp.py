@@ -1,7 +1,5 @@
-import os
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, START, END
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from lawApp_LangGraph.node.langgraph_nodes import Simple_llm_node, AgentState
 from lawApp_LangGraph.tools.tools import get_google_search, send_email, markdown_to_pdf
@@ -49,7 +47,6 @@ def Router_node(state: AgentState):
 
 def RAG_node(state: AgentState):
     pass
-
 
 def Evalue_func():
     pass
