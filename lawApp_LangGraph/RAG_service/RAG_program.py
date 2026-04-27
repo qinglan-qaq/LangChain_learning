@@ -41,6 +41,27 @@ class RAG_service:
             region: str,
             dimension: int = 1024
     ):
+        """
+        定义RAG全流程的类
+        实现加载文件
+        文档切分
+        嵌入模型
+        存入向量数据库
+        混合检索(语义检索 BM25检索 RRF融合)
+        重排序(CROSS-ENCODER)
+        上下文组装
+
+        方法:
+        md文档分块工具(md_splitter)
+        段落句子分块(text_splitter)
+
+        :param index_name:
+        :param api_key:
+        :param cloud:
+        :param region:
+        :param dimension:
+        """
+
         self.index_name = index_name
         self.api_key = api_key
         self.cloud = cloud
