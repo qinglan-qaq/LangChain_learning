@@ -21,7 +21,6 @@ def get_google_search(query: str):
         formatted_results.append(
             f"标题: {res.get('title')}\n摘要: {res.get('snippet')}\n链接: {res.get('link')}\n---"
         )
-
     if not formatted_results:
         return "未找到相关搜索结果。"
 
