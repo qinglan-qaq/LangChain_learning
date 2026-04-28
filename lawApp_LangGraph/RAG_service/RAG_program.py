@@ -9,30 +9,11 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from pinecone_text.sparse import BM25Encoder
 import time
 from pinecone import Pinecone, ServerlessSpec
-from FlagEmbedding import FlagReranker
-
-"""
-RAG流程:
-加载文件
-文档切分
-嵌入模型
-存入向量数据库
-混合检索(语义检索 BM25检索 RRF融合)
-重排序(CROSS-ENCODER)
-上下文组装
-
-定义RAG_service类:
-    配置文件
-    配置数据库
-
-    定义方法:
-        添加文档
-        检索文档
-
-"""
+from sentence_transformers import CrossEncoder
 
 
 class RAG_service:
+
     def __init__(
             self,
             index_name: str,
@@ -42,18 +23,14 @@ class RAG_service:
             dimension: int = 1024
     ):
         """
-        定义RAG全流程的类
-        实现加载文件
-        文档切分
-        嵌入模型
-        存入向量数据库
-        混合检索(语义检索 BM25检索 RRF融合)
-        重排序(CROSS-ENCODER)
-        上下文组装
-
-        方法:
-        md文档分块工具(md_splitter)
-        段落句子分块(text_splitter)
+        创建初始化类
+        包含:
+        初始化Pinecone
+        md文档分割工具
+        递归分块(段落 句子)
+        BGA向量化
+        BM25稀疏矩阵向量化
+        BAAI重排序模型
 
         :param index_name:
         :param api_key:
@@ -61,7 +38,6 @@ class RAG_service:
         :param region:
         :param dimension:
         """
-
         self.index_name = index_name
         self.api_key = api_key
         self.cloud = cloud
@@ -82,9 +58,11 @@ class RAG_service:
             add_start_index=True
         )
 
-        self.reranker = FlagReranker('BAAI/bge-reranker-large', use_fp16=True)
+        # 重排序模型
+        self.reranker = CrossEncoder('BAAI/bge-reranker-large', max_length=512)
 
-        self.bm25 = BM25Encoder().load("../lawApp_LangGraph/RAG_service/bm25_law_params.json")
+        # 稀疏向量
+        self.bm25 = BM25Encoder().load("bm25_law_params.json")
 
         # 密集向量
         model_name = "BAAI/bge-large-zh-v1.5"
@@ -93,15 +71,14 @@ class RAG_service:
             encode_kwargs={'normalize_embeddings': True}
         )
 
-    """
-    创建索引
-    创建混合索引
-    指定的索引方式
-    @:param wait_for_completion
-    @:return boolean
-    """
-
     def create_index(self, wait_for_completion: bool = True) -> bool:
+        """
+        创建索引
+        创建混合索引
+        指定的索引方式
+        :param wait_for_completion:
+        :return:
+        """
         self.pc = Pinecone(api_key=self.api_key)
 
         # 混合索引的强制要求：metric 必须为 dotproduct，vector_type 为 dense
@@ -130,43 +107,41 @@ class RAG_service:
 
         return True
 
-    """
-    获取索引是否创建成功
-    测试索引是否创建成功并打印统计信息
-    """
-
     def get_index_stats(self):
-
+        """
+        获取索引是否创建成功
+        测试索引是否创建成功并打印统计信息
+        :return: 是否创建成功
+        """
         stats = self.index.describe_index_stats()
         print("当前索引的状态: ", stats)
         return True
 
-    """
-    添加文本到数据库中需要:
-    加载文本,
-    文本分块,
-    
-    具体实施:
-    (正则表达式)
-    将清洗好的文件加载
-    以每一个案例为单位
-    先提取元数据
-    (分块)
-    从[基本案情]到最后的内容提取
-    以句子为单位,合成一大段
-    
-    @:param file_path:str
-    @:return 符合输入格式的列表
-    """
-
     def get_Documents(self, file_path: str) -> list[Any] | None:
+        """
+        添加文本到数据库中需要:
+        加载文本,
+        文本分块,
+
+        具体实施:
+        (正则表达式)
+        将清洗好的文件加载
+        以每一个案例为单位
+        先提取元数据
+        (分块)
+        从[基本案情]到最后的内容提取
+        以句子为单位,合成一大段
+
+        数据清洗:
+        metadata:{year,case_number,case_cause,chunk_text}
+
+
+        :param file_path:str
+        :return 符合输入格式的列表
+        """
 
         # 加载获取
         global articles, metadata, facts_cleaned
-
-        # 插入Pinecone数据容器
-        Pinecone_records = []
-
         loader = TextLoader(
             file_path,
             encoding="utf-8"
@@ -187,184 +162,153 @@ class RAG_service:
             # split_text 返回 List[Document]，每个 Document 对应一个一级标题下的内容块
             articles = self.md_splitter.split_text(doc.page_content)
 
-            # 获取元数据和正文内容
-            for i, article in enumerate(articles):
+        # 获取元数据和正文内容
+        for DocuID, article in enumerate(articles):
 
-                print(f'正在处理第{i}文章')
+            metadata = {}
 
-                metadata = {}
+            # 提取年份：假设文件名或路径包含 202X
+            year_match = re.search(r"20\d{2}", article.page_content)
+            if year_match:
+                metadata["year"] = year_match.group(0) if year_match else "Unknown"
 
-                # 提取年份：假设文件名或路径包含 202X
-                year_match = re.search(r"20\d{2}", article.page_content)
-                if year_match:
-                    metadata["year"] = year_match.group(0) if year_match else "Unknown"
+                # 提取裁判书字号：匹配如（2023）最高法民终...号
+                case_num_pattern = r'裁判书字号[\s\\n]+((?:(?!裁判书字号)[\s\S])+?法院[\s\S]+?书)'
+                case_num_match = re.search(case_num_pattern, article.page_content)
 
-                    # 提取裁判书字号：匹配如（2023）最高法民终...号
-                    case_num_pattern = r'裁判书字号[\s\\n]+((?:(?!裁判书字号)[\s\S])+?法院[\s\S]+?书)'
-                    case_num_match = re.search(case_num_pattern, article.page_content)
+                metadata["case_number"] = case_num_match.group(1).strip() if case_num_match else "未识别"
 
-                    metadata["case_number"] = case_num_match.group(1).strip() if case_num_match else "未识别"
+                # 提取案由：通常在字号之后，或者是特定的段落
+                case_cause_pattern = r"案由[:：]\s*([\u4e00-\u9fa5]+)"
+                cause_match = re.search(case_cause_pattern, article.page_content)
 
-                    # 提取案由：通常在字号之后，或者是特定的段落
-                    case_cause_pattern = r"案由[:：]\s*([\u4e00-\u9fa5]+)"
-                    cause_match = re.search(case_cause_pattern, article.page_content)
+                metadata["case_cause"] = cause_match.group(1) if cause_match else "通用"
 
-                    metadata["case_cause"] = cause_match.group(1) if cause_match else "通用"
+                # 最终的metadata示例: 'metadata': {'case_cause': ,'case_number': , 'chunk_index': 2,'chunk_text': }
 
-                    # 提取基本案情
-                    facts_pattern = r'【基本案情】\s*([\s\S]+?)(?=\n【|$)'
-                    facts_match = re.search(facts_pattern, article.page_content)
+                # 提取基本案情
+                facts_pattern = r'【基本案情】\s*([\s\S]+?)(?=\n【|$)'
+                facts_match = re.search(facts_pattern, article.page_content)
 
-                    # 获取捕获组内容（不含【基本案情】）
-                    raw_content = facts_match.group(1)
-                    # 去除空格、换行、制表符等所有空白字符，以及 # 符号
-                    facts_cleaned = re.sub(r'\n+', '\n', raw_content).strip()  # 去除所有空白（空格、换行等）
-                    facts_cleaned = facts_cleaned.replace('#', '')  # 去除所有 # 字符
+                # 获取捕获组内容（不含【基本案情】）
+                raw_content = facts_match.group(1)
+                # 去除空格、换行、制表符等所有空白字符，以及 # 符号
+                facts_cleaned = re.sub(r'\n+', '\n', raw_content).strip()  # 去除所有空白（空格、换行等）
+                facts_cleaned = facts_cleaned.replace('#', '')  # 去除所有 # 字符
 
-                    chunks = self.text_splitter.split_text(facts_cleaned)
+        # 插入Pinecone数据容器
+        Pinecone_records = []
 
-                    for chunk_id, chunk in enumerate(chunks):
-                        record_id = f"Docu{i}_chunk{chunk_id}"
+        chunks = self.text_splitter.split_text(facts_cleaned)
 
-                        # 密集向量和稀疏向量
-                        dense_vector = embeddings.embed_query(chunk)
+        for i, chunk in enumerate(chunks):
+            # 独有的
+            record_id = f"annualCases{year_match}_Docu{DocuID}_chunk{i}"
 
-                        # 返回 {"indices": [...], "values": [...]}
-                        sparse_vector = bm25.encode_documents(chunk)
+            # 密集向量
+            dense_vector = embeddings.embed_query(chunk)
 
-                        """
-                        添加内容: id 向量数据 元数据:{年份 判决书 案由 文档切片}
-                        符合Pinecone的输入格式
-                        """
-                        record = {
-                            "id": record_id,
+            # 返回 {"indices": [...], "values": [...]}
+            sparse_vector = bm25.encode_documents(chunk)
 
-                            "values": dense_vector,  # 稠密向量列表 [0.12, -0.34, ...]
-                            "sparse_values": sparse_vector,  # 稀疏向量字典
-                            "metadata": {
-                                "chunk_index": chunk_id,
-                                **metadata,
-                                "chunk_text": chunk,
-                            }
-                        }
-                        print(f'第{chunk_id}个record组装完毕')
+            """
+            添加内容: id 向量数据 元数据:{年份 判决书 案由 文档切片}
+            符合Pinecone的输入格式
+            """
+            record = {
+                "id": record_id,
+                "chunk_index": i,
+                "values": dense_vector,  # 稠密向量列表 [0.12, -0.34, ...]
+                "sparse_values": sparse_vector,  # 稀疏向量字典
+                "metadata": {
+                    **metadata,
+                    "chunk_text": chunk,
+                }
+            }
 
-                        Pinecone_records.append(record)
-                print("\n")
-                print(f'第{i}文章处理完毕,已经添加至record中\n')
+            Pinecone_records.append(record)
+
             return Pinecone_records
 
-    """
-        添加分块好的文本到数据库中    
-        @:param 
-            file_path: 文件路径
-            namespace: 指定命名空间
-        @:return 
+    def add_document(self, file_path: str, namespace: str, ):
         """
+        添加分块好的文本到数据库中
+        :param file_path:
+        :param namespace:
+        :return:
+        """
+        records = self.get_Documents(file_path=file_path)
 
-    def add_document(
-            self,
-            file_path: str,
-            namespace: str,
-    ):
-
-        Pinecone_records = self.get_Documents(file_path=file_path)
-
-        # 分批上传，每批最多 50 条向量
-        batch_size = 50
-        total = len(Pinecone_records)
-
-        for i in range(0, total, batch_size):
-            batch = Pinecone_records[i:i + batch_size]
-            self.index.upsert(vectors=batch, namespace="Law_test_namespace")
-            uploaded = min(i + batch_size, total)
-            print(f"已上传 {uploaded}/{total} 条记录")
-
-        print(self.pc.describe_index("pinecone-test-lawapp"))
+        # 指定命名空间添加数据
+        self.index.upsert(
+            vectors=records,
+            namespace=namespace,
+        )
 
         return True
 
-    """
-    接受问题
-    实现检索
-    混合检索(语义+关键字)
-    实现重排序
-    
-    
-    @:param query
-    @:return
-    
-    """
-
-    def dense_search(self, query, namespace, top_k=50):
-        query_vec = self.embeddings.embed_query(query)
-        return self.index.query(vector=query_vec, top_k=top_k, namespace=namespace, include_metadata=True).matches
-
-    def sparse_search(self, query, namespace, top_k=50):
-        query_sparse = self.bm25.encode_queries(query)
-        return self.index.query(sparse_vector=query_sparse, top_k=top_k, namespace=namespace,
-                                include_metadata=True).matches
-
-    """
-    results_lists: 多个 match 列表，每个 match 对象必须有 id 属性
-    k: RRF 常数，通常取 60
-    返回：按融合分数降序排列的 match 列表
-    """
-
-    def rrf_fusion(
-            self,
-            results_lists: list[list],
-            k: int = 60,
-            top_n: int = 10
-    ):
-
-        score_dict = {}
-        id_to_match = {}
-
-        for lst in results_lists:
-            for rank, match in enumerate(lst):
-                doc_id = match.id
-                # RRF计算公式 分数累加： 1 / (k + rank + 1)
-                rrf_score = 1.0 / (k + rank + 1)
-                score_dict[doc_id] = score_dict.get(doc_id, 0.0) + rrf_score
-                id_to_match[doc_id] = match
-
-        # 按融合分数降序排序
-        sorted_ids = sorted(
-            score_dict.keys(),
-            key=lambda x: score_dict[x],
-            reverse=True
-        )
-        final_matches = []
-        for doc_id in sorted_ids[:top_n]:
-            match = id_to_match[doc_id]
-            match.rrf_score = score_dict[doc_id]
-            final_matches.append(match)
-
-        return final_matches
-
-    def search_documents(
+    def search_withDenseSparse(
             self,
             query: str,
             namespace: str,
             top_k: int = 50,
-            top_n: int = 10
-    ):
+            rerank_top_n=10,
+            alpha: float = 0.5
+    ) -> list:
+        """
+        分别获取问题的稀疏和密集向量化矩阵
+        双路查询
+        对结果和文字重排序
+        分别检索的向量对文本意思没有关联
+        交叉编码器同时接收查询‑文档对作为输入
+        通过 Transformer 的全注意力机制（Self‑Attention）让查询和文档的每个词充分交互
+        最终输出一个相关性分数
 
-        # 密集向量语义查询
-        dense_matches = self.dense_search(query, namespace, top_k)
+        :param query:
+        :param namespace:
+        :param top_k:
+        :param rerank_top_n:
+        :param alpha:
+        :return: 重排序后的结果列表
+        """
+        # 密集向量
+        dense_vec = self.embeddings.embed_query(query)
 
-        # 稀疏向量 关键字查询
-        sparse_matches = self.sparse_search(query, namespace, top_k)
+        # 稀疏向量
+        sparse_vec = self.bm25.encode_documents(query)
 
-        # RRF融合算法
-        fused = self.rrf_fusion([dense_matches, sparse_matches], k=60, top_n=top_k)
+        # 混合召回
+        results = self.index.query(
+            vector=dense_vec,
+            sparse_vector=sparse_vec,
+            alpha=alpha,  # 控制权重：关键词 (0 <====> 1) 语义
+            namespace=namespace,
+            top_k=top_k,
+            include_metadata=True
+        )
+        print("混合召回中...")
 
-        # 融合后重排序结果
-        rerank_result = self.reranker(query, fused, top_n)
+        #  提取文本，准备重排序
+        matches = results.matches
+        texts = [m.metadata['chunk_text'] for m in matches]
+        # 问题与原文的键值对
+        pairs = [[query, t] for t in texts]
 
+        # 3. 计算重排序分数
+        scores = self.reranker.predict(pairs)
 
-        return rerank_result
+        # 4. 重组并排序
+        for match, score in zip(matches, scores):
+            match.rerank_score = score
+
+        # 按分数高低排序
+        reranked = sorted(matches, key=lambda x: x.rerank_score, reverse=True)
+
+        print("重排序中...")
+
+        print("重排序结果为:{}".format(reranked))
+
+        return reranked[:rerank_top_n]
 
 
 load_dotenv()
@@ -377,5 +321,3 @@ service = RAG_service(
     region="us-east-1",
 )
 service.create_index()
-
-service.get_index_stats()
