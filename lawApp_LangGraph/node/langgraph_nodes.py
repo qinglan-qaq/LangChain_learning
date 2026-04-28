@@ -12,13 +12,14 @@ CRAG流程:
 
 """
 import os
+from typing import TypedDict, List, Dict, Optional, Literal
 
+from langchain_core.language_models import BaseLanguageModel
+from langchain_core.messages import SystemMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END
-from typing import Annotated
-from langchain_core.messages import SystemMessage
-from langgraph.graph import add_messages
-from pydantic import BaseModel, Field, ConfigDict
 
 # 初始化 LLM
 llm = ChatOpenAI(
@@ -29,17 +30,28 @@ llm = ChatOpenAI(
 )
 
 
-class AgentState(BaseModel):
-    # 消息列表，支持追加消息
-    messages: Annotated[list, add_messages] = Field(default_factory=list)
-    # 用户id
-    user_id: str = ""
-    # 置信度
-    confidence_score: float = 0.0
+class AgentState(TypedDict):
+    # 输入
+    query: str
 
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-    )
+    # 路由判断结果
+    difficulty: Optional[Literal["简单", "中等", "困难"]]
+    is_legal: bool  # 是否法律相关问题
+
+    # 检索结果（中等 & 困难共用）
+    retrieved_docs: Optional[List[Dict]]
+
+    # CRAG 评估结果
+    evaluation: Optional[Dict[str, List[Dict]]]  # {correct, ambiguous, incorrect}
+
+    # CRAG 采用的路径
+    crag_path: Optional[str]  # "direct_rag", "rag_plus_web", "web_only"
+
+    # 最终送给 LLM 的上下文
+    final_context: Optional[str]
+
+    # 最终答案
+    answer: Optional[str]
 
 
 # 设计类 实现llm的调用
@@ -91,6 +103,57 @@ def Simple_llm_node(state: AgentState) -> dict:
     return response
 
 
+ROUTER_PROMPT = PromptTemplate.from_template("""
+你是一个法律咨询系统的智能路由器。请分析用户的提问，完成两项判断：
+1. 该问题是否与法律相关（仅回答“是”或“否”）；
+2. 如果相关，判断其复杂度等级（“简单”、“中等”或“困难”）。
+   - 简单：仅需常识性法律知识即可回答，无需查阅具体法条或案例（例如“什么是合同？”）。
+   - 中等：需要引用法律条文或一般性案例，但无需跨案例比较或深度推理。
+   - 困难：需要综合多个案例、涉及复杂案情细节、或需要额外网络信息辅助。
+
+请严格按照以下JSON格式输出，不要添加任何多余文字：
+{{"is_legal": true/false, "difficulty": "简单/中等/困难/不适用"}}
+
+示例：
+用户：我朋友借了我5000块钱不还，我能起诉他吗？
+回复：{{"is_legal": true, "difficulty": "中等"}}
+
+用户：今天天气怎么样？
+回复：{{"is_legal": false, "difficulty": "不适用"}}
+
+用户：婚姻中一方隐匿财产，离婚时如何分割？
+回复：{{"is_legal": true, "difficulty": "困难"}}
+
+现在请判断以下问题：
+{query}
+回复：""")
+
+
+def router_node(state: AgentState, llm: BaseLanguageModel) -> dict:
+    """
+    难度路由判断节点
+    :param state:
+    :param llm:
+    :return:
+    """
+    query = state["query"]
+    chain = ROUTER_PROMPT | llm | StrOutputParser()
+    result_str = chain.invoke({"query": query})
+    # 简化的JSON解析（生产环境建议用json.loads）
+    import json
+    try:
+        result = json.loads(result_str)
+        is_legal = result.get("is_legal", False)
+        difficulty = result.get("difficulty", "不适用") if is_legal else None
+    except:
+        is_legal = False
+        difficulty = None
+    return {
+        "is_legal": is_legal,
+        "difficulty": difficulty if is_legal else None
+    }
+
+
 def Evaluate_llm(state: AgentState) -> dict:
     # 带内部分级标准的提示词
     system_prompt = """You are a document relevance evaluator. Assess whether the retrieved document can help answer the user's question.
@@ -116,10 +179,8 @@ def farewell(state: AgentState) -> str:
     return "使用完毕,再见~"
 
 
-
 # 路由器,用来判断用户提问的复杂程度
 def Router_node(state: AgentState):
-
     last_message = state["messages"][-1]
 
     content = last_message.content.lower()
@@ -142,4 +203,3 @@ def RAG_node(state: AgentState):
 
 def Evalue_func():
     pass
-
