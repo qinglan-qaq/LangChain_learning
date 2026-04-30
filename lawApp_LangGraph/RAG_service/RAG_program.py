@@ -296,10 +296,10 @@ class RAG_service:
         # 问题与原文的键值对
         pairs = [[query, t] for t in texts]
 
-        # 3. 计算重排序分数
+        # 计算重排序分数
         scores = self.reranker.predict(pairs)
 
-        # 4. 重组并排序
+        # 重组并排序
         for match, score in zip(matches, scores):
             match.rerank_score = score
 

@@ -1,7 +1,8 @@
 from dotenv import load_dotenv
-from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage
-from lawApp_LangGraph.node.langgraph_nodes import Simple_llm_node, AgentState
+from langgraph.graph import StateGraph, START, END
+
+from lawApp_LangGraph.node.langgraph_nodes import Simple_llm_node, AgentState, Router_node
 from lawApp_LangGraph.tools.tools import get_google_search, send_email, markdown_to_pdf
 
 """
@@ -10,14 +11,13 @@ from lawApp_LangGraph.tools.tools import get_google_search, send_email, markdown
 用户提问 ->
 路由器分发判断 ->
 (简单问题) -> LLM直接回答
-(模糊问题) -> RAG检索 -> LLM回答
-(复杂问题) -> CRAG流程
+(法律问题) -> CRAG流程
 
 需要:
 路由节点(少样本LLM构建)
 LLM直接回答节点
 RAG检索节点
-CRAG节点(子图形式)
+CRAG节点
 条件边
 """
 
@@ -27,29 +27,7 @@ load_dotenv()
 tools = [get_google_search, send_email, markdown_to_pdf]
 
 
-# 路由器,用来判断用户提问的复杂程度
-def Router_node(state: AgentState):
-    last_message = state["messages"][-1]
 
-    content = last_message.content.lower()
-
-    if "简单问题" or "simple" in content:
-        return "llm_node"
-
-    if "中等问题" or "normal" in content:
-        return "RAG_node"
-
-    if "困难问题" or "hard" in content:
-        return "CRAG_node"
-
-    pass
-
-
-def RAG_node(state: AgentState):
-    pass
-
-def Evalue_func():
-    pass
 
 
 builder = StateGraph(AgentState)
