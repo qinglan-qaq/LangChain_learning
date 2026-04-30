@@ -10,6 +10,7 @@ from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharac
 from pinecone import Pinecone, ServerlessSpec
 from pinecone_text.sparse import BM25Encoder
 from sentence_transformers import CrossEncoder
+from tqdm.notebook import tqdm
 
 
 class RAG_service:
@@ -49,21 +50,21 @@ class RAG_service:
         # 初始化工具
         headers_to_split_on = [("#", "Header_1")]
 
+        # md文档分割
         self.md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
-
+        # 段落句子分割
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=512,
             chunk_overlap=50,
-            separators=["\n\n", "\n", "。", "；", " "],
+            separators=["\n\n", "\n", ".", "；", " "],
             add_start_index=True
         )
 
         # 重排序模型
         self.reranker = CrossEncoder('BAAI/bge-reranker-large', max_length=512)
 
-        bm25_path = os.getenv("BM25_PATH")
         # 稀疏向量
-        self.bm25 = BM25Encoder().load(bm25_path)
+        self.bm25 = BM25Encoder().load("bm25_law_params.json")
 
         # 密集向量
         model_name = "BAAI/bge-large-zh-v1.5"
@@ -82,7 +83,7 @@ class RAG_service:
         """
         self.pc = Pinecone(api_key=self.api_key)
 
-        # 混合索引的强制要求：metric 必须为 dotproduct，vector_type 为 dense
+        # 混合索引的强制要求：metric 必须为 dotproduct,vector_type 为 dense
         target_metric = "dotproduct"
 
         # 检查索引是否存在
@@ -96,15 +97,15 @@ class RAG_service:
                 vector_type="dense",
             )
         else:
-            print(f"索引 '{self.index_name}' 已存在。")
+            print(f"索引 '{self.index_name}' 已存在.")
         # 等待索引就绪 异步处理
         if wait_for_completion:
             while not self.pc.describe_index(self.index_name).status.get("ready", False):
                 time.sleep(2)
-            print(f"索引 '{self.index_name}' 已就绪。")
+            print(f"索引 '{self.index_name}' 已就绪.")
 
         self.index = self.pc.Index(self.index_name)
-        print(f"索引 '{self.index_name}' 已就绪。")
+        print(f"索引 '{self.index_name}' 已就绪.")
 
         return True
 
@@ -171,15 +172,14 @@ class RAG_service:
 
             metadata["case_number"] = case_num_match.group(1).strip() if case_num_match else "未识别"
 
-            # 提取案由：通常在字号之后，或者是特定的段落
+            # 提取案由：通常在字号之后,或者是特定的段落
             case_cause_pattern = r"案由[:：]\s*([\u4e00-\u9fa5]+)"
             cause_match = re.search(case_cause_pattern, article.page_content)
 
             metadata["case_cause"] = cause_match.group(1) if cause_match else "通用"
 
-            # 最终的metadata示例:
-            # 'metadata': {'case_cause': ,'case_number': ,
-            # 'chunk_index': ,'chunk_text': }
+            # 最终的metadata示例: 'metadata': {'case_cause': ,'case_number': , 'chunk_index': 2,'chunk_text': }
+
             # 提取基本案情
             facts_pattern = r'【基本案情】\s*([\s\S]+?)(?=\n【|$)'
             facts_match = re.search(facts_pattern, article.page_content)
@@ -188,7 +188,7 @@ class RAG_service:
                 continue
             # 获取捕获组内容（不含【基本案情】）
             raw_content = facts_match.group(1)
-            # 去除空格、换行、制表符等所有空白字符，以及 # 符号
+            # 去除空格、换行、制表符等所有空白字符,以及 # 符号
             facts_cleaned = re.sub(r'\n+', '\n', raw_content).strip()  # 去除所有空白（空格、换行等）
             facts_cleaned = facts_cleaned.replace('#', '')  # 去除所有 # 字符
 
@@ -227,15 +227,14 @@ class RAG_service:
 
         return Pinecone_records
 
-    def add_document_namespace(self, Pinecone_records, namespace: str, ):
+    def add_document(self, Pinecone_records, namespace: str, ):
         """
-        分批次上传
+        添加分块好的文本到数据库中
         :param Pinecone_records:
         :param namespace:
         :return:
         """
-
-        # 分批上传，每批最多 50 条向量
+        # 分批上传,每批最多 50 条向量
         batch_size = 50
         total = len(Pinecone_records)
 
@@ -254,61 +253,77 @@ class RAG_service:
             query: str,
             namespace: str,
             top_k: int = 50,
-            rerank_top_n=10,
+            rerank_top_n: int = 10,
             alpha: float = 0.5
     ) -> list:
         """
-        分别获取问题的稀疏和密集向量化矩阵
-        双路查询
-        对结果和文字重排序
-        分别检索的向量对文本意思没有关联
-        交叉编码器同时接收查询‑文档对作为输入
-        通过 Transformer 的全注意力机制（Self‑Attention）让查询和文档的每个词充分交互
-        最终输出一个相关性分数
-
+         分别获取问题的稀疏和密集向量化矩阵
+         双路查询
+         对结果和文字重排序
+         分别检索的向量对文本意思没有关联
+         交叉编码器同时接收查询‑文档对作为输入
+         通过 Transformer 的全注意力机制（Self‑Attention）让查询和文档的每个词充分交互
+         最终输出一个相关性分数
         :param query:
         :param namespace:
         :param top_k:
         :param rerank_top_n:
         :param alpha:
-        :return: 重排序后的结果列表
+        :return:
         """
-        # 密集向量
+
+        progress = tqdm(total=400, desc="检索流程", unit="step")
+
+        progress.set_description("生成查询向量")
+
         dense_vec = self.embeddings.embed_query(query)
+        sparse_vec = self.bm25.encode_queries(query)
 
-        # 稀疏向量
-        sparse_vec = self.bm25.encode_documents(query)
+        for _ in range(100):
+            time.sleep(0.01)
+            progress.update(1)
 
-        # 混合召回
+        # 步骤2：混合召回
+        progress.set_description("混合召回中")
         results = self.index.query(
             vector=dense_vec,
             sparse_vector=sparse_vec,
-            alpha=alpha,  # 控制权重：关键词 (0 <====> 1) 语义
+            alpha=alpha,
             namespace=namespace,
             top_k=top_k,
             include_metadata=True
         )
-        print("混合召回中...")
-
-        #  提取文本，准备重排序
         matches = results.matches
+
+        for _ in range(100):
+            time.sleep(0.01)
+            progress.update(1)
+
+        if not matches:
+            progress.close()
+            print("未检索到任何结果")
+            return []
+
+        # 步骤3：提取文本对
+        progress.set_description("提取文本对")
         texts = [m.metadata['chunk_text'] for m in matches]
-        # 问题与原文的键值对
         pairs = [[query, t] for t in texts]
 
-        # 计算重排序分数
-        scores = self.reranker.predict(pairs)
+        for _ in range(100):
+            time.sleep(0.01)
+            progress.update(1)
 
-        # 重组并排序
+        # 步骤4：重排序
+        progress.set_description("重排序中")
+        scores = self.reranker.predict(pairs)
         for match, score in zip(matches, scores):
             match.rerank_score = score
-
-        # 按分数高低排序
         reranked = sorted(matches, key=lambda x: x.rerank_score, reverse=True)
 
-        print("重排序中...")
-
-        print("重排序结果为:{}".format(reranked))
+        for _ in range(100):
+            time.sleep(0.01)
+            progress.update(1)
+        progress.close()
 
         return reranked[:rerank_top_n]
 
