@@ -2,11 +2,13 @@ import os
 import re
 import time
 from typing import Any
-
 from dotenv import load_dotenv
 from langchain_community.document_loaders import TextLoader
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
+from langchain_text_splitters import (
+    MarkdownHeaderTextSplitter,
+    RecursiveCharacterTextSplitter,
+)
 from pinecone import Pinecone, ServerlessSpec
 from pinecone_text.sparse import BM25Encoder
 from sentence_transformers import CrossEncoder
@@ -14,14 +16,13 @@ from tqdm.notebook import tqdm
 
 
 class RAG_service:
-
     def __init__(
-            self,
-            index_name: str,
-            api_key: str,
-            cloud: str,
-            region: str,
-            dimension: int = 1024
+        self,
+        index_name: str,
+        api_key: str,
+        cloud: str,
+        region: str,
+        dimension: int = 1024,
     ):
         """
         创建初始化类
@@ -51,17 +52,19 @@ class RAG_service:
         headers_to_split_on = [("#", "Header_1")]
 
         # md文档分割
-        self.md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
+        self.md_splitter = MarkdownHeaderTextSplitter(
+            headers_to_split_on=headers_to_split_on
+        )
         # 段落句子分割
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=512,
             chunk_overlap=50,
             separators=["\n\n", "\n", ".", "；", " "],
-            add_start_index=True
+            add_start_index=True,
         )
 
         # 重排序模型
-        self.reranker = CrossEncoder('BAAI/bge-reranker-large', max_length=512)
+        self.reranker = CrossEncoder("BAAI/bge-reranker-large", max_length=512)
 
         # 稀疏向量
         self.bm25 = BM25Encoder().load("bm25_law_params.json")
@@ -69,8 +72,7 @@ class RAG_service:
         # 密集向量
         model_name = "BAAI/bge-large-zh-v1.5"
         self.embeddings = HuggingFaceEmbeddings(
-            model_name=model_name,
-            encode_kwargs={'normalize_embeddings': True}
+            model_name=model_name, encode_kwargs={"normalize_embeddings": True}
         )
 
     def create_index(self, wait_for_completion: bool = True) -> bool:
@@ -100,7 +102,9 @@ class RAG_service:
             print(f"索引 '{self.index_name}' 已存在.")
         # 等待索引就绪 异步处理
         if wait_for_completion:
-            while not self.pc.describe_index(self.index_name).status.get("ready", False):
+            while not self.pc.describe_index(self.index_name).status.get(
+                "ready", False
+            ):
                 time.sleep(2)
             print(f"索引 '{self.index_name}' 已就绪.")
 
@@ -142,10 +146,7 @@ class RAG_service:
         :return 符合输入格式的列表
         """
 
-        loader = TextLoader(
-            file_path,
-            encoding="utf-8"
-        )
+        loader = TextLoader(file_path, encoding="utf-8")
 
         # 插入Pinecone数据容器
         Pinecone_records = []
@@ -167,10 +168,14 @@ class RAG_service:
             metadata["year"] = year_match.group(0) if year_match else "Unknown"
 
             # 提取裁判书字号：匹配如（2023）最高法民终...号
-            case_num_pattern = r'裁判书字号[\s\\n]+((?:(?!裁判书字号)[\s\S])+?法院[\s\S]+?书)'
+            case_num_pattern = (
+                r"裁判书字号[\s\\n]+((?:(?!裁判书字号)[\s\S])+?法院[\s\S]+?书)"
+            )
             case_num_match = re.search(case_num_pattern, article.page_content)
 
-            metadata["case_number"] = case_num_match.group(1).strip() if case_num_match else "未识别"
+            metadata["case_number"] = (
+                case_num_match.group(1).strip() if case_num_match else "未识别"
+            )
 
             # 提取案由：通常在字号之后,或者是特定的段落
             case_cause_pattern = r"案由[:：]\s*([\u4e00-\u9fa5]+)"
@@ -181,7 +186,7 @@ class RAG_service:
             # 最终的metadata示例: 'metadata': {'case_cause': ,'case_number': , 'chunk_index': 2,'chunk_text': }
 
             # 提取基本案情
-            facts_pattern = r'【基本案情】\s*([\s\S]+?)(?=\n【|$)'
+            facts_pattern = r"【基本案情】\s*([\s\S]+?)(?=\n【|$)"
             facts_match = re.search(facts_pattern, article.page_content)
 
             if not facts_match:
@@ -189,8 +194,10 @@ class RAG_service:
             # 获取捕获组内容（不含【基本案情】）
             raw_content = facts_match.group(1)
             # 去除空格、换行、制表符等所有空白字符,以及 # 符号
-            facts_cleaned = re.sub(r'\n+', '\n', raw_content).strip()  # 去除所有空白（空格、换行等）
-            facts_cleaned = facts_cleaned.replace('#', '')  # 去除所有 # 字符
+            facts_cleaned = re.sub(
+                r"\n+", "\n", raw_content
+            ).strip()  # 去除所有空白（空格、换行等）
+            facts_cleaned = facts_cleaned.replace("#", "")  # 去除所有 # 字符
 
             print("元数据和原文解析完毕...")
 
@@ -219,7 +226,7 @@ class RAG_service:
                         **metadata,
                         "chunk_index": i,
                         "chunk_text": chunk,
-                    }
+                    },
                 }
                 Pinecone_records.append(record)
 
@@ -227,7 +234,11 @@ class RAG_service:
 
         return Pinecone_records
 
-    def add_document(self, Pinecone_records, namespace: str, ):
+    def add_document(
+        self,
+        Pinecone_records,
+        namespace: str,
+    ):
         """
         添加分块好的文本到数据库中
         :param Pinecone_records:
@@ -239,7 +250,7 @@ class RAG_service:
         total = len(Pinecone_records)
 
         for i in range(0, total, batch_size):
-            batch = Pinecone_records[i:i + batch_size]
+            batch = Pinecone_records[i : i + batch_size]
             self.index.upsert(vectors=batch, namespace=namespace)
             uploaded = min(i + batch_size, total)
             print(f"已上传 {uploaded}/{total} 条记录")
@@ -249,21 +260,21 @@ class RAG_service:
         return True
 
     def search_withDenseSparse(
-            self,
-            query: str,
-            namespace: str,
-            top_k: int = 50,
-            rerank_top_n: int = 10,
-            alpha: float = 0.5
+        self,
+        query: str,
+        namespace: str,
+        top_k: int = 50,
+        rerank_top_n: int = 10,
+        alpha: float = 0.5,
     ) -> list:
         """
-         分别获取问题的稀疏和密集向量化矩阵
-         双路查询
-         对结果和文字重排序
-         分别检索的向量对文本意思没有关联
-         交叉编码器同时接收查询‑文档对作为输入
-         通过 Transformer 的全注意力机制（Self‑Attention）让查询和文档的每个词充分交互
-         最终输出一个相关性分数
+        分别获取问题的稀疏和密集向量化矩阵
+        双路查询
+        对结果和文字重排序
+        分别检索的向量对文本意思没有关联
+        交叉编码器同时接收查询‑文档对作为输入
+        通过 Transformer 的全注意力机制（Self‑Attention）让查询和文档的每个词充分交互
+        最终输出一个相关性分数
         :param query:
         :param namespace:
         :param top_k:
@@ -291,7 +302,7 @@ class RAG_service:
             alpha=alpha,
             namespace=namespace,
             top_k=top_k,
-            include_metadata=True
+            include_metadata=True,
         )
         matches = results.matches
 
@@ -306,7 +317,7 @@ class RAG_service:
 
         # 步骤3：提取文本对
         progress.set_description("提取文本对")
-        texts = [m.metadata['chunk_text'] for m in matches]
+        texts = [m.metadata["chunk_text"] for m in matches]
         pairs = [[query, t] for t in texts]
 
         for _ in range(100):
@@ -328,13 +339,16 @@ class RAG_service:
         return reranked[:rerank_top_n]
 
 
-load_dotenv()
+# load_dotenv()
 
-# 实例化测试
-service = RAG_service(
-    index_name="pinecone-test-lawapp",
-    api_key=os.getenv("PINECONE_API_KEY"),
-    cloud="aws",
-    region="us-east-1",
-)
-result = service.get_Documents("../MarkDownFiles/中国法院2020年度案例：婚姻家庭与继承纠纷.md")
+# # 实例化测试
+# service = RAG_service(
+#     index_name="pinecone-test-lawapp",
+#     api_key=os.getenv("PINECONE_API_KEY"),
+#     cloud="aws",
+#     region="us-east-1",
+# )
+
+# result = service.get_Documents(
+#     "../MarkDownFiles/中国法院2020年度案例：婚姻家庭与继承纠纷.md"
+# )

@@ -9,6 +9,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END
 from pydantic import BaseModel, Field
+from lawApp_LangGraph.tools.tools import get_google_search, markdown_to_pdf
 
 # 初始化 LLM
 llm = ChatOpenAI(
@@ -66,7 +67,7 @@ def start_node(state: AgentState) -> dict:
     :param state:
     :return:
     """
-    # 读取并通过副本追加新消息（避免原地修改）
+    # 读取并通过副本追加新消息(避免原地修改)
     messages = state.messages.copy()
     if state.query.strip():
         messages.append({"role": "user", "content": state.query})
@@ -101,7 +102,7 @@ def create_router_node(llm: BaseLanguageModel) -> Callable:
         - 非法律问题,日常闲聊、非法律领域知识.
 
     2. **是否简单问题** (`is_simple`),true 或 false
-        - 简单问题,无需检索法条或案例,凭常识或基础法律知识即可回答（包括非法律问题一律视为简单）.
+        - 简单问题,无需检索法条或案例,凭常识或基础法律知识即可回答(包括非法律问题一律视为简单).
         - 复杂问题,需要查阅具体法条、司法解释、相关判例或深度推理.
 
     严格输出 JSON 格式,
@@ -215,7 +216,7 @@ def create_retrieval_node(
 
         retrieved = []
         for match in matches:
-            # match 拥有属性：id, metadata, score, rerank_score
+            # match 拥有属性:id, metadata, score, rerank_score
             meta = match.metadata or {}
             retrieved.append(
                 {
@@ -249,7 +250,7 @@ def create_evaluate_node(
         docs = state.rag_retrieved
 
         correct, ambiguous, incorrect = [], [], []
-        # 遍历检索结果，根据评分进行分类
+        # 遍历检索结果,根据评分进行分类
         for doc in docs:
             # 检索结果文档仍然是 dict,保持原有访问方式
             score = doc.get("rerank_score", 0.0)
@@ -275,44 +276,42 @@ def create_evaluate_node(
 # 目前搁置 暂无网络搜索的tool实现 或者说没考虑到位 目前仅能查找返回相关的网页链接
 
 
-def create_web_search_node(
-    llm: BaseLanguageModel, search_func: Callable[[str, int], List[str]]
-) -> Callable:
+def create_web_search_node(llm: BaseLanguageModel) -> Callable:
     """
     返回联网检索节点:智能提取关键字并对 ambiguous 和 incorrect 的内容进行网络搜索补充.
 
     核心策略:
-    1. 提取Ambiguous资料中的关键信息（涉及的法律概念、人物、事件等）
-    2. 结合用户原始问题，使用LLM生成多个搜索关键字
+    1. 提取Ambiguous资料中的关键信息(涉及的法律概念、人物、事件等)
+    2. 结合用户原始问题,使用LLM生成多个搜索关键字
     3. 执行多轮搜索以获得更全面的补充资料
+    4. 使用 get_google_search 工具进行网络搜索
 
-    :param llm: 语言模型，用于关键字生成和内容提取
-    :param search_func: 搜索函数，search_func(query, num) -> List[str]
+    :param llm: 语言模型,用于关键字生成和内容提取
     :return: 节点函数
     """
 
     # 关键字生成提示词
     KEYWORD_EXTRACTION_PROMPT = PromptTemplate.from_template("""
-    你是一个法律搜索助手，擅长从模糊的法律资料中提取核心概念和关键词。
+    你是一个法律搜索助手,擅长从模糊的法律资料中提取核心概念和关键词.
     
-    任务目标：
-    基于用户原始问题和检索出的模糊(Ambiguous)资料，生成3-5个精准的网络搜索关键字。
-    这些关键字应该能帮助我们获取补充资料，填补知识空白。
+    任务目标:
+    基于用户原始问题和检索出的模糊(Ambiguous)资料,生成3-5个精准的网络搜索关键字.
+    这些关键字应该能帮助我们获取补充资料,填补知识空白.
     
-    用户问题：
+    用户问题:
     {user_query}
     
-    模糊资料摘要（来自RAG）：
+    模糊资料摘要(来自RAG):
     {ambiguous_docs_summary}
     
-    生成策略：
-    1. 关键词1: 针对问题中的核心法律概念（如"合同纠纷"）
-    2. 关键词2: 针对隐含的法律问题类型（如"违约责任"）
+    生成策略:
+    1. 关键词1: 针对问题中的核心法律概念(如"合同纠纷")
+    2. 关键词2: 针对隐含的法律问题类型(如"违约责任")
     3. 关键词3: 针对相关的法条或司法解释
-    4. 关键词4（可选）: 针对特定情景或案例类型
-    5. 关键词5（可选）: 针对补救措施或赔偿方式
+    4. 关键词4(可选): 针对特定情景或案例类型
+    5. 关键词5(可选): 针对补救措施或赔偿方式
     
-    严格返回 JSON 格式（不含其他文本）：
+    严格返回 JSON 格式(不含其他文本):
     {{
         "keywords": [
             {{"keyword": "关键词1", "purpose": "目的说明"}},
@@ -331,7 +330,7 @@ def create_web_search_node(
         ambiguous_docs = evaluation.get("ambiguous", [])
         user_query = state.query
 
-        # 如果没有模糊资料，仅使用原始问题搜索
+        # 如果没有模糊资料,仅使用原始问题搜索
         if not ambiguous_docs and not user_query:
             return {"web_search_results": []}
 
@@ -345,7 +344,7 @@ def create_web_search_node(
                 doc_summaries.append(f"- {text}")
             ambiguous_summary = "\n".join(doc_summaries)
         else:
-            ambiguous_summary = "（暂无模糊资料）"
+            ambiguous_summary = "(暂无模糊资料)"
 
         # ===== 步骤2: 使用LLM生成搜索关键字 =====
         try:
@@ -357,11 +356,11 @@ def create_web_search_node(
             search_strategy = keyword_result.get("search_strategy", "")
         except Exception as e:
             print(f"[警告] 关键字生成失败: {str(e)}")
-            # 降级方案：使用原始问题直接搜索
+            # 降级方案:使用原始问题直接搜索
             keywords_list = [{"keyword": user_query, "purpose": "原始问题"}]
             search_strategy = "使用原始问题进行搜索"
 
-        # ===== 步骤3: 执行多轮搜索 =====
+        # ===== 步骤3: 执行多轮搜索(使用 get_google_search 工具) =====
         all_results = []
         search_metadata = []
 
@@ -372,31 +371,45 @@ def create_web_search_node(
             if not keyword.strip():
                 continue
 
-            # 执行搜索
-            results = search_func(keyword, num=3)
+            try:
+                # 使用 get_google_search 工具执行搜索
+                search_result = get_google_search.invoke({"query": keyword})
 
-            # 记录搜索元数据（便于追踪）
-            search_metadata.append(
-                {
-                    "round": idx,
-                    "keyword": keyword,
-                    "purpose": purpose,
-                    "results_count": len(results),
-                }
-            )
+                # 如果返回的是字符串格式的结果,分行处理
+                if isinstance(search_result, str):
+                    results = [search_result]
+                else:
+                    results = (
+                        search_result
+                        if isinstance(search_result, list)
+                        else [search_result]
+                    )
 
-            # 合并结果，添加来源信息
-            for result in results:
-                all_results.append(
+                # 记录搜索元数据(便于追踪)
+                search_metadata.append(
                     {
-                        "content": result,
-                        "source_keyword": keyword,
-                        "source_purpose": purpose,
+                        "round": idx,
+                        "keyword": keyword,
+                        "purpose": purpose,
+                        "results_count": len(results),
                     }
                 )
 
+                # 合并结果,添加来源信息
+                for result in results:
+                    all_results.append(
+                        {
+                            "content": result,
+                            "source_keyword": keyword,
+                            "source_purpose": purpose,
+                        }
+                    )
+            except Exception as e:
+                print(f"[警告] 搜索关键词 '{keyword}' 失败: {str(e)}")
+                continue
+
         # ===== 步骤4: 去重和排序 =====
-        # 基于内容去重（简单的字符串匹配）
+        # 基于内容去重(简单的字符串匹配)
         unique_results = []
         seen_contents = set()
 
@@ -421,7 +434,8 @@ def create_web_search_node(
 
 
 def create_analysis_node(llm: BaseLanguageModel) -> Callable:
-    """分析节点:
+    """
+    分析节点:
     最终的大模型分析节点
     将RAG检索结果和网络搜索结果结合,进行最终的法律分析
     上下文组装后链式分析
@@ -463,18 +477,34 @@ def create_analysis_node(llm: BaseLanguageModel) -> Callable:
     return analysis_node
 
 
-def create_postprocess_node(pdf_generator: Callable[[str, str], str]) -> Callable:
+def create_postprocess_node() -> Callable:
     """
     后处理节点:将最终回答保存为PDF,并更新pdf_path.
-    pdf_generator(answer_text, output_filename) -> pdf_path
+    使用 markdown_to_pdf 工具生成PDF文件
+
+    :return: 后处理节点函数
     """
 
     def postprocess_node(state: AgentState) -> dict:
-        # 优先使用 final_answer，其次使用从 analysis_node 返回的答案
+        # 优先使用 final_answer,其次使用从 analysis_node 返回的答案
         answer = state.final_answer if state.final_answer else ""
         if not answer:
             answer = ""
-        pdf_path = pdf_generator(answer, f"report_{state.query[:20]}.pdf")
+
+        # 生成文件名(取查询的前20个字符)
+        query_name = state.query[:20] if state.query else "report"
+        filename = f"report_{query_name}.pdf"
+
+        try:
+            # 使用 markdown_to_pdf 工具生成PDF
+            result = markdown_to_pdf.invoke(
+                {"markdown_text": answer, "filename": filename}
+            )
+            pdf_path = result if isinstance(result, str) else str(result)
+        except Exception as e:
+            print(f"[警告] PDF生成失败: {str(e)}")
+            pdf_path = f"PDF生成失败: {str(e)}"
+
         return {"final_answer": answer, "pdf_path": pdf_path}
 
     return postprocess_node
@@ -501,9 +531,9 @@ def memory_update_node(state: AgentState) -> dict:
     }
 
 
-# 条件路由函数（必须单独定义,因为条件边需要引用函数名称,此处提供样例）
+# 条件路由函数(必须单独定义,因为条件边需要引用函数名称,此处提供样例)
 def route_by_difficulty(state: AgentState) -> str:
-    if state.is_simple_questions:   # 简单的问题直接进入简单节点
+    if state.is_simple_questions:  # 简单的问题直接进入简单节点
         return "simple_llm"
     else:
         return "crag_retrieval"  # 困难或其它情况进入CRAG检索
@@ -511,35 +541,35 @@ def route_by_difficulty(state: AgentState) -> str:
 
 def route_after_evaluation(state: AgentState, correct_threshold: int = 3) -> str:
     """
-    评估后的条件路由：根据RAG检索结果的评估分布，决定是否需要网络搜索补充
-    
-    策略：
-    - 高质量文档（correct）>= threshold：直接分析，无需网络搜索
-    - 否则：执行网络搜索获取补充资料
-    
+    评估后的条件路由:根据RAG检索结果的评估分布,决定是否需要网络搜索补充
+
+    策略:
+    - 高质量文档(correct)>= threshold:直接分析,无需网络搜索
+    - 否则:执行网络搜索获取补充资料
+
     :param state: AgentState
-    :param correct_threshold: 正确文档的最小数量阈值（默认3）
+    :param correct_threshold: 正确文档的最小数量阈值(默认3)
     :return: 下一个节点名称 "analysis" 或 "web_search"
     """
     eval = state.evaluation
     correct_count = len(eval.get("correct", []))
     ambiguous_count = len(eval.get("ambiguous", []))
     incorrect_count = len(eval.get("incorrect", []))
-    
+
     total_docs = correct_count + ambiguous_count + incorrect_count
-    
+
     # 三层判断逻辑
     if total_docs == 0:
-        # 没有检索到任何文档，必须网络搜索
+        # 没有检索到任何文档,必须网络搜索
         return "web_search"
     elif correct_count >= correct_threshold:
-        # 高质量文档足够，直接分析
+        # 高质量文档足够,直接分析
         return "analysis"
     elif correct_count + ambiguous_count >= correct_threshold:
-        # 中高质量文档足够，可以直接分析，但质量一般
+        # 中高质量文档足够,可以直接分析,但质量一般
         return "analysis"
     else:
-        # 文档质量/数量不足，需要网络补充
+        # 文档质量/数量不足,需要网络补充
         return "web_search"
 
 
@@ -547,18 +577,20 @@ def route_after_evaluation(state: AgentState, correct_threshold: int = 3) -> str
 NODES = {
     # 开始节点
     "start": start_node,
-    # 路由节点（需要传入 llm 实例）
+    # 路由节点(需要传入 llm 实例)
     "router": create_router_node,
     # 非法律问题直接进入简单LLM回答节点
     "simple_llm": simple_llm_node,
-    # 复杂问题进入RAG检索节点（需要传入 rag_service 实例）
+    # 复杂问题进入RAG检索节点(需要传入 rag_service 实例)
     "retrieval": create_retrieval_node,
-    # 评估节点（需要传入阈值参数或者采用预设阈值）
+    # 评估节点(需要传入阈值参数或者采用预设阈值)
     "evaluate": create_evaluate_node,
-    # 网络检索节点（需要传入 llm 实例和 search_func 函数）目前效果不是很好
+    # 网络检索节点(需要传入 llm 实例,使用 get_google_search 工具进行搜索)
     "web_search": create_web_search_node,
-    #
+    # 分析节点(需要传入 llm 实例)
     "analysis": create_analysis_node,
+    # 后处理节点(使用 markdown_to_pdf 工具生成PDF)
     "postprocess": create_postprocess_node,
+    # 记忆更新节点
     "memory_update": memory_update_node,
 }

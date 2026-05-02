@@ -17,7 +17,9 @@ from lawApp_LangGraph.node.langgraph_nodes import (
     route_after_evaluation,
     llm,
 )
-from lawApp_LangGraph.tools.tools import get_google_search, send_email, markdown_to_pdf
+from lawApp_LangGraph.tools.tools import get_google_search, markdown_to_pdf
+
+from lawApp_LangGraph.RAG_service.RAG_program import RAG_service
 
 """
 
@@ -42,50 +44,30 @@ from lawApp_LangGraph.tools.tools import get_google_search, send_email, markdown
 # 获取环境变量
 load_dotenv()
 
-tools = [get_google_search, send_email, markdown_to_pdf]
+tools = [get_google_search, markdown_to_pdf]
 
-# ===== 初始化RAG服务和PDF生成器 =====
-# TODO: 需要根据实际项目注入这些依赖
-# rag_service = RAGService(...)  
-# pdf_generator = PDFGenerator(...)
 
-# 为演示，先定义占位符
-class MockRAGService:
-    """占位符 RAG 服务，实际应替换为真实实现"""
-    def search_withDenseSparse(self, query, namespace, top_k, rerank_top_n, alpha):
-        return []
+rag_service = RAG_service(
+    index_name="pinecone-test-lawapp",
+    api_key=os.getenv("PINECONE_API_KEY"),
+    cloud="aws",
+    region="us-east-1",
+)
 
-class MockPDFGenerator:
-    """占位符 PDF 生成器"""
-    def __call__(self, content, filename):
-        return f"/path/to/{filename}"
-
-def mock_search_func(query: str, num: int):
-    """占位符网络搜索函数"""
-    return [f"搜索结果 {i} for '{query}'" for i in range(num)]
-
-rag_service = MockRAGService()
-pdf_generator = MockPDFGenerator()
-search_func = mock_search_func
-
-# ===== 创建节点实例（工厂函数需要参数） =====
+# 工厂模式创建节点
 router_node = create_router_node(llm)
 retrieval_node = create_retrieval_node(rag_service)
 evaluate_node = create_evaluate_node()
-web_search_node = create_web_search_node(llm, search_func)
+web_search_node = create_web_search_node(llm)
 analysis_node = create_analysis_node(llm)
-postprocess_node = create_postprocess_node(pdf_generator)
+postprocess_node = create_postprocess_node()
+
 
 # simple_llm_node 需要适配（原始函数需要额外的llm参数）
 def simple_llm_node_wrapper(state: AgentState) -> dict:
     """LangGraph适配包装：simple_llm_node"""
     simple_llm_node(state, llm)
-    return {
-        "final_answer": state.final_answer,
-        "messages": state.messages
-    }
-
-
+    return {"final_answer": state.final_answer, "messages": state.messages}
 
 
 # ===== 构建 LangGraph 图 =====
@@ -114,15 +96,15 @@ builder.add_conditional_edges(
     "router",
     route_by_difficulty,  # 路由函数
     {
-        "simple_llm": "simple_llm",     # 简单问题 -> LLM直接回答
-        "crag_retrieval": "retrieval"   # 复杂问题 -> RAG检索
-    }
+        "simple_llm": "simple_llm",  # 简单问题 -> LLM直接回答
+        "crag_retrieval": "retrieval",  # 复杂问题 -> RAG检索
+    },
 )
 
 # 4. simple_llm 直接到后处理
 builder.add_edge("simple_llm", "postprocess")
 
-# 5. retrieval -> evaluate（评估检索结果）
+# 5. retrieval -> evaluate 进入CRAG流程
 builder.add_edge("retrieval", "evaluate")
 
 # 6. evaluate 之后的条件分支：判断是否需要网络搜索
@@ -130,9 +112,9 @@ builder.add_conditional_edges(
     "evaluate",
     route_after_evaluation,  # 路由函数
     {
-        "analysis": "analysis",      # 文档足够 -> 直接分析
-        "web_search": "web_search"   # 文档不足 -> 网络搜索补充
-    }
+        "analysis": "analysis",  # 文档足够 -> 直接分析
+        "web_search": "web_search",  # 文档不足 -> 网络搜索补充
+    },
 )
 
 # 7. web_search -> analysis（获取补充资料后进行分析）
@@ -154,17 +136,17 @@ graph = builder.compile()
 if __name__ == "__main__":
     # 测试查询
     test_query = "泥嚎,我有点累了"
-    
+
     print(f"输入问题: {test_query}\n")
-    
+
     # 流式执行
     final_state = None
     for chunk in graph.stream({"query": test_query, "messages": []}):
         print(f"步骤输出: {chunk}\n")
         final_state = chunk
-    
+
     # 提取最终答案
     if final_state and "final_answer" in final_state:
         print(f"\n最终答案: {final_state['final_answer']}")
-    
+
     print("\n工作流执行完成！")

@@ -98,14 +98,5 @@ def markdown_to_pdf(markdown_text: str, filename: str = None) -> str:
     return f"PDF 已成功生成，文件路径：{file_path}"
 
 
-@tool
-def send_email(email_address: str = None) -> str:
-    """当用户要求发送邮件时
-    可以使用该工具发送消息
-
-    :param email_address:str
-    :return: 返回成功或者失败消息
-    """
-
 
 
