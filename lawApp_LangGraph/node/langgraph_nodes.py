@@ -1,7 +1,6 @@
 import json
 import os
-from typing import Any, Callable, TypedDict, List, Dict, Optional, Literal
-
+from typing import Any, Callable, List, Dict
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import StrOutputParser
@@ -143,7 +142,7 @@ def create_router_node(llm: BaseLanguageModel) -> Callable:
     return router_node
 
 
-def simple_llm_node(state: AgentState, llm: BaseLanguageModel):
+def simple_llm_node(state: AgentState, llm: BaseLanguageModel) -> dict:
     """
     回答简单问题的节点
     :param state:
@@ -178,6 +177,12 @@ def simple_llm_node(state: AgentState, llm: BaseLanguageModel):
     answer = chain.invoke({"query": state.query})
     state.final_answer = answer
     state.messages.append({"role": "assistant", "content": answer})
+
+    return {
+        "final_answer": state.final_answer,
+        "messages": state.messages,
+    }
+
 
 
 def create_retrieval_node(

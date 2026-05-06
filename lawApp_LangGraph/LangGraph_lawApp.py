@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+import os
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, START, END
 
@@ -63,12 +64,6 @@ analysis_node = create_analysis_node(llm)
 postprocess_node = create_postprocess_node()
 
 
-# simple_llm_node 需要适配（原始函数需要额外的llm参数）
-def simple_llm_node_wrapper(state: AgentState) -> dict:
-    """LangGraph适配包装：simple_llm_node"""
-    simple_llm_node(state, llm)
-    return {"final_answer": state.final_answer, "messages": state.messages}
-
 
 # ===== 构建 LangGraph 图 =====
 builder = StateGraph(AgentState)
@@ -76,7 +71,7 @@ builder = StateGraph(AgentState)
 # 添加所有节点
 builder.add_node("start", start_node)
 builder.add_node("router", router_node)
-builder.add_node("simple_llm", simple_llm_node_wrapper)
+builder.add_node("simple_llm", simple_llm_node)
 builder.add_node("retrieval", retrieval_node)
 builder.add_node("evaluate", evaluate_node)
 builder.add_node("web_search", web_search_node)
