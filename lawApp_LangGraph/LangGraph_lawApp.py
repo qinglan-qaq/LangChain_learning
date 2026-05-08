@@ -3,8 +3,8 @@ import os
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, START, END
 
+from lawApp_LangGraph.state import AgentState
 from lawApp_LangGraph.node.langgraph_nodes import (
-    AgentState,
     start_node,
     create_router_node,
     simple_llm_node,

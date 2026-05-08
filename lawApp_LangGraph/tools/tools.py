@@ -1,10 +1,10 @@
 import os
 from datetime import datetime
 import markdown
-import pdfkit
 from langchain_community.utilities import SerpAPIWrapper
 from langchain_core.tools import tool
 
+# 获取网络检索内容
 @tool
 def get_google_search(query: str):
     """使用谷歌搜索API在线搜索信息,适用于回答时事、确认事实或寻找特定网址"""
@@ -50,6 +50,8 @@ def markdown_to_pdf(markdown_text: str, filename: str = None) -> str:
     :param filename:
     :return:
     """
+    import pdfkit
+
     # 生成文件名
     if not filename:
         filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"

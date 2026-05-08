@@ -1,27 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
+
+from lawApp_LangGraph.state import EvaluationResult
 
 # 基础问题信息结构
 class Message(BaseModel):
     role: str
     content: str
-
-# 检索到的文档结构
-class RetrievedDoc(BaseModel):
-    id: Optional[str] = None
-    chunk_text: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    rerank_score: Optional[float] = None
-    score: Optional[float] = None
-
-# 评估结果结构
-class EvaluationResult(BaseModel):
-    correct: List[RetrievedDoc] = Field(default_factory=list)
-    ambiguous: List[RetrievedDoc] = Field(default_factory=list)
-    incorrect: List[RetrievedDoc] = Field(default_factory=list)
 
 # 请求体模型
 class QueryRequest(BaseModel):

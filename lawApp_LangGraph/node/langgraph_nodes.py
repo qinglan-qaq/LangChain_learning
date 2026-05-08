@@ -1,13 +1,13 @@
 import json
 import os
-from typing import Any, Callable, List, Dict
+from typing import Any, Callable, Dict, List
+
 from langchain_core.language_models import BaseLanguageModel
-from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
-from langgraph.graph import END
-from pydantic import BaseModel, Field
+
+from lawApp_LangGraph.state import AgentState, EvaluationResult, RetrievedDocument
 from lawApp_LangGraph.tools.tools import get_google_search, markdown_to_pdf
 
 # 初始化 LLM
@@ -17,46 +17,6 @@ llm = ChatOpenAI(
     openai_api_base=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
     temperature=0.3,
 )
-
-
-class AgentState(BaseModel):
-    # 用户问题
-    query: str = ""
-
-    # 历史消息 分角色user agent : content
-    messages: List[Dict[str, str]] = Field(default_factory=list)
-
-    # 是否为法律问题
-    is_law_questions: bool = False
-
-    # 是否为简单问题
-    is_simple_questions: bool = False
-
-    # RAG检索出的内容
-    rag_retrieved: List[Dict[str, Any]] = Field(default_factory=list)
-
-    # 评估等级 Correct Ambiguous Incorrect
-    evaluation: Dict[str, List[Dict]] = Field(
-        default_factory=lambda: {"correct": [], "ambiguous": [], "incorrect": []}
-    )
-
-    # 联网搜索结果
-    web_search_results: List[str] = Field(default_factory=list)
-
-    # CRAG拼接检索结果
-    crag_context: str = ""
-
-    # 上下文组装提示词送入llm
-    final_prompts: str = ""
-
-    # 最终的回答
-    final_answer: str = ""
-
-    # 是否需要pdf形式输出
-    is_pdf_output: bool = False
-
-    # 循环下一轮回答
-    should_continue: bool = True
 
 
 def start_node(state: AgentState) -> dict:
@@ -75,8 +35,8 @@ def start_node(state: AgentState) -> dict:
         "messages": messages,
         "is_law_questions": False,
         "is_simple_questions": False,
-        "rag_retrieved": [],
-        "evaluation": {"correct": [], "ambiguous": [], "incorrect": []},
+        "rag_documents": [],
+        "evaluation": EvaluationResult(),
         "web_search_results": [],
         "crag_context": "",
         "final_prompts": "",
@@ -184,7 +144,6 @@ def simple_llm_node(state: AgentState, llm: BaseLanguageModel) -> dict:
     }
 
 
-
 def create_retrieval_node(
     rag_service,
     namespace: str = "law_cases",
@@ -208,7 +167,7 @@ def create_retrieval_node(
     def retrieval_node(state: AgentState) -> Dict[str, Any]:
         query = state.query.strip()
         if not query:
-            return {"rag_retrieved": []}
+            return {"rag_documents": []}
 
         # 混合检索 + 重排序
         matches = rag_service.search_withDenseSparse(
@@ -221,19 +180,22 @@ def create_retrieval_node(
 
         retrieved = []
         for match in matches:
-            # match 拥有属性:id, metadata, score, rerank_score
             meta = match.metadata or {}
             retrieved.append(
-                {
-                    "id": match.id,
-                    "chunk_text": meta.get("chunk_text", ""),
-                    "metadata": meta,
-                    "rerank_score": getattr(match, "rerank_score", None),
-                    "score": match.score,
-                }
+                RetrievedDocument(
+                    id=match.id,
+                    chunk_text=meta.get("chunk_text", ""),
+                    year=meta.get("year", ""),
+                    case_number=meta.get("case_number", ""),
+                    case_cause=meta.get("case_cause", ""),
+                    rerank_score=round(getattr(match, "rerank_score", 0.0), 4),
+                    hybrid_score=round(match.score, 4)
+                    if hasattr(match, "score")
+                    else 0.0,
+                )
             )
 
-        return {"rag_retrieved": retrieved}
+        return {"rag_documents": retrieved}
 
     return retrieval_node
 
@@ -251,14 +213,11 @@ def create_evaluate_node(
     """
 
     def evaluate_node(state: AgentState) -> Dict[str, Any]:
-        # 获取RAG检索结果
-        docs = state.rag_retrieved
+        docs = state.rag_documents
 
         correct, ambiguous, incorrect = [], [], []
-        # 遍历检索结果,根据评分进行分类
         for doc in docs:
-            # 检索结果文档仍然是 dict,保持原有访问方式
-            score = doc.get("rerank_score", 0.0)
+            score = doc.rerank_score
             if score >= correct_threshold:
                 correct.append(doc)
             elif score < incorrect_threshold:
@@ -266,13 +225,24 @@ def create_evaluate_node(
             else:
                 ambiguous.append(doc)
 
-        # 返回结构与 AgentState.evaluation 兼容
+        total_usable = len(correct) + len(ambiguous)
+        quality_verdict = (
+            "充足"
+            if len(correct) >= 3 or total_usable >= 3
+            else "不足，建议进行网络搜索补充"
+        )
+
         return {
-            "evaluation": {
-                "correct": correct,
-                "ambiguous": ambiguous,
-                "incorrect": incorrect,
-            }
+            "evaluation": EvaluationResult(
+                total=len(docs),
+                correct_count=len(correct),
+                ambiguous_count=len(ambiguous),
+                incorrect_count=len(incorrect),
+                quality_verdict=quality_verdict,
+                correct=correct,
+                ambiguous=ambiguous,
+                incorrect=incorrect,
+            )
         }
 
     return evaluate_node
@@ -332,7 +302,7 @@ def create_web_search_node(llm: BaseLanguageModel) -> Callable:
     def web_search_node(state: AgentState) -> dict:
         """执行网络搜索并返回补充资料"""
         evaluation = state.evaluation
-        ambiguous_docs = evaluation.get("ambiguous", [])
+        ambiguous_docs = evaluation.ambiguous
         user_query = state.query
 
         # 如果没有模糊资料,仅使用原始问题搜索
@@ -345,7 +315,7 @@ def create_web_search_node(llm: BaseLanguageModel) -> Callable:
             # 提取前3条最相关的模糊资料
             doc_summaries = []
             for doc in ambiguous_docs[:3]:
-                text = doc.get("chunk_text", "")[:200]  # 取前200字
+                text = doc.chunk_text[:200]  # 取前200字
                 doc_summaries.append(f"- {text}")
             ambiguous_summary = "\n".join(doc_summaries)
         else:
@@ -452,16 +422,16 @@ def create_analysis_node(llm: BaseLanguageModel) -> Callable:
 
     def analysis_node(state: AgentState) -> dict:
         evaluation = state.evaluation
-        correct = evaluation.get("correct", [])
-        ambiguous = evaluation.get("ambiguous", [])
+        correct = evaluation.correct
+        ambiguous = evaluation.ambiguous
         web_results = state.web_search_results
 
         # 构建上下文
         context_parts = []
         for doc in correct:
-            context_parts.append(f"[高相关案例] {doc['chunk_text']}")
+            context_parts.append(f"[高相关案例] {doc.chunk_text}")
         for doc in ambiguous:
-            context_parts.append(f"[中等相关案例] {doc['chunk_text']}")
+            context_parts.append(f"[中等相关案例] {doc.chunk_text}")
         for i, snippet in enumerate(web_results, 1):
             context_parts.append(f"[外部资料{i}] {snippet}")
         context = "\n\n".join(context_parts)
@@ -522,12 +492,12 @@ def memory_update_node(state: AgentState) -> dict:
     """
     # 简单重置部分字段,保留messages历史
     return {
-        "query": "",  # 清空查询,等待下一轮输入
+        "query": "",
         "should_continue": True,
         "is_law_questions": False,
         "is_simple_questions": False,
-        "rag_retrieved": [],
-        "evaluation": {"correct": [], "ambiguous": [], "incorrect": []},
+        "rag_documents": [],
+        "evaluation": EvaluationResult(),
         "web_search_results": [],
         "crag_context": "",
         "final_prompts": "",
@@ -557,9 +527,9 @@ def route_after_evaluation(state: AgentState, correct_threshold: int = 3) -> str
     :return: 下一个节点名称 "analysis" 或 "web_search"
     """
     eval = state.evaluation
-    correct_count = len(eval.get("correct", []))
-    ambiguous_count = len(eval.get("ambiguous", []))
-    incorrect_count = len(eval.get("incorrect", []))
+    correct_count = eval.correct_count
+    ambiguous_count = eval.ambiguous_count
+    incorrect_count = eval.incorrect_count
 
     total_docs = correct_count + ambiguous_count + incorrect_count
 
