@@ -8,7 +8,11 @@ from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 
 from lawApp_LangGraph.state import AgentState, EvaluationResult, RetrievedDocument
-from lawApp_LangGraph.tools.tools import get_google_search, markdown_to_pdf
+from lawApp_LangGraph.tools.tools import (
+    fetch_webpage_text,
+    get_google_search,
+    markdown_to_pdf,
+)
 
 # 初始化 LLM
 llm = ChatOpenAI(
@@ -248,44 +252,44 @@ def create_evaluate_node(
     return evaluate_node
 
 
-# 目前搁置 暂无网络搜索的tool实现 或者说没考虑到位 目前仅能查找返回相关的网页链接
-
-
-def create_web_search_node(llm: BaseLanguageModel) -> Callable:
+def create_web_search_node(
+    llm: BaseLanguageModel,
+    fetch_top_n: int = 3,
+    fetch_max_chars: int = 2000,
+) -> Callable:
     """
-    返回联网检索节点:智能提取关键字并对 ambiguous 和 incorrect 的内容进行网络搜索补充.
+    返回联网检索节点：智能生成关键字 → 谷歌搜索 → 抓取网页正文 → 合并返回。
 
-    核心策略:
-    1. 提取Ambiguous资料中的关键信息(涉及的法律概念、人物、事件等)
-    2. 结合用户原始问题,使用LLM生成多个搜索关键字
-    3. 执行多轮搜索以获得更全面的补充资料
-    4. 使用 get_google_search 工具进行网络搜索
+    增强点（相比旧版）：
+    1. 搜索返回结构化 JSON（标题 / 链接 / 摘要）而非混排文本
+    2. 对 top-{fetch_top_n} 的搜索结果，调用 fetch_webpage_text 抓取网页正文
+    3. 最终输出包含「摘要」和「正文」两层信息，供 analysis_node 使用
 
-    :param llm: 语言模型,用于关键字生成和内容提取
-    :return: 节点函数
+    :param llm:         用于关键字生成的 LLM
+    :param fetch_top_n: 需要抓取全文的搜索结果数量
+    :param fetch_max_chars: 每个网页抓取的最大字符数
     """
 
-    # 关键字生成提示词
     KEYWORD_EXTRACTION_PROMPT = PromptTemplate.from_template("""
     你是一个法律搜索助手,擅长从模糊的法律资料中提取核心概念和关键词.
-    
+
     任务目标:
     基于用户原始问题和检索出的模糊(Ambiguous)资料,生成3-5个精准的网络搜索关键字.
     这些关键字应该能帮助我们获取补充资料,填补知识空白.
-    
+
     用户问题:
     {user_query}
-    
+
     模糊资料摘要(来自RAG):
     {ambiguous_docs_summary}
-    
+
     生成策略:
     1. 关键词1: 针对问题中的核心法律概念(如"合同纠纷")
     2. 关键词2: 针对隐含的法律问题类型(如"违约责任")
     3. 关键词3: 针对相关的法条或司法解释
     4. 关键词4(可选): 针对特定情景或案例类型
     5. 关键词5(可选): 针对补救措施或赔偿方式
-    
+
     严格返回 JSON 格式(不含其他文本):
     {{
         "keywords": [
@@ -300,108 +304,110 @@ def create_web_search_node(llm: BaseLanguageModel) -> Callable:
     keyword_chain = KEYWORD_EXTRACTION_PROMPT | llm | StrOutputParser()
 
     def web_search_node(state: AgentState) -> dict:
-        """执行网络搜索并返回补充资料"""
         evaluation = state.evaluation
         ambiguous_docs = evaluation.ambiguous
         user_query = state.query
 
-        # 如果没有模糊资料,仅使用原始问题搜索
         if not ambiguous_docs and not user_query:
             return {"web_search_results": []}
 
-        # ===== 步骤1: 提取Ambiguous资料的要点 =====
+        # ── 步骤1: 从 ambiguous 文档提取摘要 ──
         ambiguous_summary = ""
         if ambiguous_docs:
-            # 提取前3条最相关的模糊资料
             doc_summaries = []
             for doc in ambiguous_docs[:3]:
-                text = doc.chunk_text[:200]  # 取前200字
-                doc_summaries.append(f"- {text}")
+                doc_summaries.append(f"- {doc.chunk_text[:200]}")
             ambiguous_summary = "\n".join(doc_summaries)
         else:
             ambiguous_summary = "(暂无模糊资料)"
 
-        # ===== 步骤2: 使用LLM生成搜索关键字 =====
+        # ── 步骤2: LLM 生成搜索关键字 ──
         try:
-            raw_keywords = keyword_chain.invoke(
-                {"user_query": user_query, "ambiguous_docs_summary": ambiguous_summary}
-            )
+            raw_keywords = keyword_chain.invoke({
+                "user_query": user_query,
+                "ambiguous_docs_summary": ambiguous_summary,
+            })
             keyword_result = json.loads(raw_keywords)
             keywords_list = keyword_result.get("keywords", [])
             search_strategy = keyword_result.get("search_strategy", "")
         except Exception as e:
-            print(f"[警告] 关键字生成失败: {str(e)}")
-            # 降级方案:使用原始问题直接搜索
+            print(f"[web_search] 关键字生成失败: {e}")
             keywords_list = [{"keyword": user_query, "purpose": "原始问题"}]
-            search_strategy = "使用原始问题进行搜索"
+            search_strategy = "降级：使用原始问题搜索"
 
-        # ===== 步骤3: 执行多轮搜索(使用 get_google_search 工具) =====
-        all_results = []
-        search_metadata = []
+        # ── 步骤3: 多轮谷歌搜索 → 解析结构化 JSON ──
+        all_snippets: List[Dict] = []   # 所有搜索摘要
+        all_urls: List[str] = []         # 收集到的链接
 
         for idx, kw_item in enumerate(keywords_list[:5], 1):
             keyword = kw_item.get("keyword", "")
-            purpose = kw_item.get("purpose", "")
-
             if not keyword.strip():
                 continue
 
             try:
-                # 使用 get_google_search 工具执行搜索
-                search_result = get_google_search.invoke({"query": keyword})
-
-                # 如果返回的是字符串格式的结果,分行处理
-                if isinstance(search_result, str):
-                    results = [search_result]
-                else:
-                    results = (
-                        search_result
-                        if isinstance(search_result, list)
-                        else [search_result]
-                    )
-
-                # 记录搜索元数据(便于追踪)
-                search_metadata.append(
-                    {
-                        "round": idx,
-                        "keyword": keyword,
-                        "purpose": purpose,
-                        "results_count": len(results),
-                    }
-                )
-
-                # 合并结果,添加来源信息
-                for result in results:
-                    all_results.append(
-                        {
-                            "content": result,
+                raw = get_google_search.invoke({"query": keyword})
+                parsed = json.loads(raw) if isinstance(raw, str) else raw
+                for item in parsed.get("results", []):
+                    link = item.get("link", "")
+                    snippet = item.get("snippet", "")
+                    if snippet or link:
+                        all_snippets.append({
+                            "title": item.get("title", ""),
+                            "link": link,
+                            "snippet": snippet,
                             "source_keyword": keyword,
-                            "source_purpose": purpose,
-                        }
-                    )
+                        })
+                        if link and link not in all_urls:
+                            all_urls.append(link)
             except Exception as e:
-                print(f"[警告] 搜索关键词 '{keyword}' 失败: {str(e)}")
-                continue
+                print(f"[web_search] 搜索 '{keyword}' 失败: {e}")
 
-        # ===== 步骤4: 去重和排序 =====
-        # 基于内容去重(简单的字符串匹配)
-        unique_results = []
-        seen_contents = set()
+        # 摘要去重（前100字）
+        seen = set()
+        unique_snippets = []
+        for s in all_snippets:
+            key = s["snippet"][:100]
+            if key not in seen:
+                seen.add(key)
+                unique_snippets.append(s)
 
-        for item in all_results:
-            content_key = item["content"][:100]  # 使用前100字作为去重键
-            if content_key not in seen_contents:
-                unique_results.append(item)
-                seen_contents.add(content_key)
+        # ── 步骤4: 抓取 top-N 网页正文 ──
+        fetched_contents: List[Dict] = []
+        for url in all_urls[:fetch_top_n]:
+            try:
+                raw = fetch_webpage_text.invoke({
+                    "url": url, "max_chars": fetch_max_chars
+                })
+                parsed = json.loads(raw) if isinstance(raw, str) else raw
+                if parsed.get("status") == "success" and parsed.get("text"):
+                    fetched_contents.append(parsed)
+            except Exception as e:
+                print(f"[web_search] 抓取网页 {url[:60]}... 失败: {e}")
 
-        # 返回结果及搜索过程信息
+        # ── 步骤5: 组装最终结果 ──
+        # web_search_results: 供 analysis_node 直接拼入 context 的文本列表
+        formatted_results: List[str] = []
+
+        # 先放网页正文（更详细的信息）
+        for fc in fetched_contents:
+            formatted_results.append(
+                f"[网页正文 | {fc.get('url', '')}]\n{fc['text']}"
+            )
+
+        # 再放搜索摘要（补充未被抓取的链接）
+        for s in unique_snippets:
+            formatted_results.append(
+                f"[搜索结果 | {s.get('title', '')} | {s.get('link', '')}]\n{s['snippet']}"
+            )
+
         return {
-            "web_search_results": [item["content"] for item in unique_results],
+            "web_search_results": formatted_results,
             "web_search_metadata": {
                 "strategy": search_strategy,
-                "total_results": len(unique_results),
-                "search_rounds": search_metadata,
-                "detailed_results": unique_results,  # 包含源信息的完整结果
+                "snippet_count": len(unique_snippets),
+                "fetched_page_count": len(fetched_contents),
+                "total_urls_collected": len(all_urls),
+                "keywords_used": [kw.get("keyword") for kw in keywords_list[:5]],
             },
         }
 

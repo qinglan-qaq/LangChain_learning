@@ -10,11 +10,9 @@ C. 顶层 — AgentState（Plan & Execute Agent 状态）
 """
 
 from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -24,10 +22,8 @@ def to_dict(model: BaseModel) -> dict:
         return model.model_dump(mode="python")
     return model.dict()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# A. 工具返回层 — Tool Output Models
-# ══════════════════════════════════════════════════════════════════════════════
 
+#  A. 工具返回层 — Tool Output Models
 
 class RetrievedDocument(BaseModel):
     """单条检索到的法律案例文档块"""
@@ -45,7 +41,7 @@ class RetrievedDocument(BaseModel):
 class RetrieveResult(BaseModel):
     """retrieve_legal_knowledge 工具返回"""
 
-    status: str = "empty"  # "success" | "empty"
+    status: str = "empty"  #  "success" | "empty"
     message: str = ""
     count: int = 0
     results: List[RetrievedDocument] = Field(default_factory=list)
@@ -58,7 +54,7 @@ class EvaluationResult(BaseModel):
     correct_count: int = 0
     ambiguous_count: int = 0
     incorrect_count: int = 0
-    quality_verdict: str = ""  # "充足" | "不足，建议进行网络搜索补充" | "无法评估"
+    quality_verdict: str = ""  
     correct: List[RetrievedDocument] = Field(default_factory=list)
     ambiguous: List[RetrievedDocument] = Field(default_factory=list)
     incorrect: List[RetrievedDocument] = Field(default_factory=list)
@@ -73,19 +69,17 @@ class AnalysisResult(BaseModel):
     sources: List[str] = Field(default_factory=list)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# B. 计划执行层 — Plan & Execute Models
-# ══════════════════════════════════════════════════════════════════════════════
 
+#  B. 计划执行层 — Plan & Execute Models
 
 class PlanStep(BaseModel):
     """计划中的单个步骤"""
 
     step_id: int
-    description: str  # 步骤描述
-    tool_name: Optional[str] = None  # 需要调用的工具名（若不需要则为 None）
-    status: str = "pending"  # pending | doing | done | failed
-    retry_count: int = 0  # 失败重试次数
+    description: str 
+    tool_name: Optional[str] = None  
+    status: str = "pending"  #  pending | doing | done | failed
+    retry_count: int = 0  #  失败重试次数
 
 
 class ToolCallRecord(BaseModel):
@@ -98,10 +92,8 @@ class ToolCallRecord(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# C. 顶层 — AgentState（Plan & Execute Agent）
-# ══════════════════════════════════════════════════════════════════════════════
 
+#  C. 顶层 — AgentState（Plan & Execute Agent）
 
 class AgentState(BaseModel):
     """Plan & Execute Agent 的全局状态"""
@@ -109,45 +101,45 @@ class AgentState(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    # ── 会话标识 ──
+    # 会话标识 
     session_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     user_id: Optional[str] = None
 
-    # ── 当前请求 ──
+    # 当前请求 
     query: str = ""
     is_pdf_output: bool = False
 
-    # ── 对话历史（多轮） ──
-    messages: List[Any] = Field(default_factory=list)  # LangChain BaseMessage 列表
+    # 对话历史（多轮） 
+    messages: List[Any] = Field(default_factory=list)  
 
-    # ── 计划与执行 ──
+    # 计划与执行 
     plan: List[PlanStep] = Field(default_factory=list)
     current_step_index: int = 0
     replan_needed: bool = False
     replan_reason: Optional[str] = None
     final_answer: str = ""
 
-    # ── 工具调用跟踪 ─
+    # 工具调用跟踪 ─
     tool_calls: List[ToolCallRecord] = Field(default_factory=list)
 
-    # ── 思考链（Chain of Thought） ──
+    #  思考链（Chain of Thought） 
     reasoning: List[str] = Field(default_factory=list)
 
-    # ── RAG / CRAG 结果 ──
+    # RAG / CRAG 结果 
     rag_documents: List[RetrievedDocument] = Field(default_factory=list)
     evaluation: EvaluationResult = Field(default_factory=EvaluationResult)
     web_search_results: List[str] = Field(default_factory=list)
     crag_context: str = ""
 
-    # ── 扩展搜索与知识 ──
+    # 扩展搜索与知识 
     statute_results: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # ── 原有 CRAG 管线兼容字段（LangGraph 路由用） ──
+    # 原有 CRAG 管线兼容字段（LangGraph 路由用） 
     is_law_questions: bool = False
     is_simple_questions: bool = False
     final_prompts: str = ""
     pdf_path: Optional[str] = None
 
-    # ── 流程控制 ──
+    # 流程控制 
     should_continue: bool = True
     error: Optional[str] = None

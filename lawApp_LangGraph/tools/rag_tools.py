@@ -10,6 +10,7 @@ Agent 可据此自主决策：检索 → 评估 → (如需)联网搜索 → 生
 
 所有工具的返回格式统一使用 state.py 中的 Pydantic 模型。
 """
+
 import os
 from typing import Any, Dict, List, Optional
 
@@ -101,9 +102,7 @@ def retrieve_legal_knowledge(
     )
 
     if not matches:
-        return to_dict(
-            RetrieveResult(status="empty", message="未检索到相关案例")
-        )
+        return to_dict(RetrieveResult(status="empty", message="未检索到相关案例"))
 
     results = []
     for i, match in enumerate(matches):
@@ -113,9 +112,7 @@ def retrieve_legal_knowledge(
                 rank=i + 1,
                 id=match.id,
                 rerank_score=round(getattr(match, "rerank_score", 0.0), 4),
-                hybrid_score=round(match.score, 4)
-                if hasattr(match, "score")
-                else 0.0,
+                hybrid_score=round(match.score, 4) if hasattr(match, "score") else 0.0,
                 year=meta.get("year", ""),
                 case_number=meta.get("case_number", ""),
                 case_cause=meta.get("case_cause", ""),
@@ -151,15 +148,13 @@ def evaluate_case_relevance(
 
     参数:
     documents: retrieve_legal_knowledge 返回结果中的 results 列表
-               每项含 rerank_score / chunk_text / case_number 等字段
+    每项含 rerank_score / chunk_text / case_number 等字段
 
     返回:
     结构化 dict，含 correct/ambiguous/incorrect 分类及 quality_verdict
     """
     if not documents:
-        return to_dict(
-            EvaluationResult(error="输入为空，没有可评估的文档")
-        )
+        return to_dict(EvaluationResult(error="输入为空，没有可评估的文档"))
 
     correct, ambiguous, incorrect = [], [], []
 
@@ -247,9 +242,7 @@ def analyze_legal_issue(
     for doc in correct_cases:
         cn = doc.get("case_number", "")
         yr = doc.get("year", "")
-        parts.append(
-            f"[高相关案例 | 案号:{cn} | {yr}年]\n{doc.get('chunk_text', '')}"
-        )
+        parts.append(f"[高相关案例 | 案号:{cn} | {yr}年]\n{doc.get('chunk_text', '')}")
         if cn:
             sources.append(f"案例: {cn} ({yr})")
 
