@@ -28,12 +28,14 @@ _rag_service = None
 _llm = None
 
 
+# 私有方法新建一个单例 RAG_service 实例,供 retrieve_legal_knowledge 工具调用
 def _get_rag_service():
     global _rag_service
     if _rag_service is None:
         from lawApp_LangGraph.RAG_service.RAG_program import RAG_service
 
         _rag_service = RAG_service(
+            # TODO: 生产环境改为从安全配置中心获取,不要直接用环境变量 需要预先配置好
             index_name=os.getenv("PINECONE_INDEX_NAME", "pinecone-test-lawapp"),
             api_key=os.getenv("PINECONE_API_KEY"),
             cloud=os.getenv("PINECONE_CLOUD", "aws"),
@@ -63,6 +65,8 @@ def retrieve_legal_knowledge(
     query: str,
     top_k: int = 30,
     rerank_top_n: int = 10,
+    alpha: float = 0.5,
+    namespace: str = "legal_cases",
 ) -> dict:
     """从法律案例库中检索相关判例.使用混合检索(语义向量 + BM25 关键词匹配)与
     CrossEncoder 重排序,返回最相关的案例内容及其相关性评分.
@@ -76,7 +80,8 @@ def retrieve_legal_knowledge(
     query: 法律问题查询语句,中文
     top_k: 初始召回数量,默认 30
     rerank_top_n: 重排序后返回数量,默认 10
-
+    alpha: 混合检索中的权重参数,默认 0.5
+    namespace: 检索的命名空间,默认 "legal_cases"
     返回:
     结构化 dict,含 status / count / results 字段,
     每个 result 为 RetrievedDocument 格式(case_number / case_cause / rerank_score / chunk_text 等)
@@ -84,10 +89,10 @@ def retrieve_legal_knowledge(
     service = _get_rag_service()
     matches = service.search_withDenseSparse(
         query=query,
-        namespace="law_cases",
+        namespace= namespace ,
         top_k=top_k,
         rerank_top_n=rerank_top_n,
-        alpha=0.5,
+        alpha=alpha,
     )
 
     if not matches:

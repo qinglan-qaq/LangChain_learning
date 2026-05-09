@@ -18,15 +18,13 @@ Graph 流程:
 """
 import json
 import os
-from typing import Any, Dict, List
-
+from typing import Any, Dict
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
-
 from lawApp_LangGraph.state import AgentState, EvaluationResult, PlanStep, RetrievedDocument, ToolCallRecord
 from lawApp_LangGraph.tools import ALL_TOOLS
 
@@ -34,7 +32,6 @@ load_dotenv()
 
 
 # 双 LLM 架构
-
 
 _llm_kwargs = dict(
     openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -50,7 +47,7 @@ llm_planner = ChatOpenAI(
 
 llm_executor = ChatOpenAI(
     model=os.getenv("DEEPSEEK_FLASH_MODEL", "deepseek-chat"),
-    temperature=0.2,
+    temperature=0.25,
     max_tokens=2048,
     **_llm_kwargs,
 )
@@ -122,7 +119,6 @@ def merge_tool_output(state: AgentState, tool_name: str, output: Any) -> Dict[st
 
 
 # 工具降级:不依赖 Flash LLM,直接参数映射
-
 
 def _invoke_tool_direct(tool_name: str, state: AgentState) -> dict:
     """直接参数映射 + 调用工具(Flash LLM 调用失败时的降级路径)"""
