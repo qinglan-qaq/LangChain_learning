@@ -16,6 +16,7 @@ Graph 流程:
     3. The Replanner  — Pro LLM 检查执行结果,不满则重新生成计划
     4. Conditional Edges — 质量门控 / 循环控制
 """
+
 import json
 import os
 from typing import Any, Dict
@@ -25,7 +26,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
-from lawApp_LangGraph.state import AgentState, EvaluationResult, PlanStep, RetrievedDocument, ToolCallRecord
+from lawApp_LangGraph.state import AgentState, PlanStep, ToolCallRecord
 from lawApp_LangGraph.tools import ALL_TOOLS
 
 load_dotenv()
@@ -60,97 +61,47 @@ llm_executor_with_tools = llm_executor.bind_tools(ALL_TOOLS)
 TOOL_BY_NAME: Dict[str, Any] = {t.name: t for t in ALL_TOOLS}
 
 
-# 工具输出 → AgentState 字段映射
+# ── 工具 → AgentState 字段合并 ──
+# 工具返回 dict 中与 AgentState 同名的 key 将被自动合并
+# web_search_results 特殊处理:追加而非覆盖
+_STATE_KEYS = {
+    "rag_documents",
+    "evaluation",
+    "final_answer",
+    "crag_context",
+    "web_search_results",
+    "pdf_path",
+    "is_pdf_output",
+}
 
-
-def merge_tool_output(state: AgentState, tool_name: str, output: Any) -> Dict[str, Any]:
-    """将工具返回的 dict 合并到 AgentState"""
-    updates: Dict[str, Any] = {}
-
-    if tool_name == "retrieve_legal_knowledge":
-        results = output.get("results", []) if isinstance(output, dict) else []
-        docs = [RetrievedDocument(**r) if isinstance(r, dict) else r for r in results]
-        updates["rag_documents"] = docs
-
-    elif tool_name == "evaluate_case_relevance":
-        if isinstance(output, dict):
-            def _doc(d):
-                return RetrievedDocument(**d) if isinstance(d, dict) else d
-
-            updates["evaluation"] = EvaluationResult(
-                total=output.get("total", 0),
-                correct_count=output.get("correct_count", 0),
-                ambiguous_count=output.get("ambiguous_count", 0),
-                incorrect_count=output.get("incorrect_count", 0),
-                quality_verdict=output.get("quality_verdict", ""),
-                correct=[_doc(d) for d in output.get("correct", [])],
-                ambiguous=[_doc(d) for d in output.get("ambiguous", [])],
-                incorrect=[_doc(d) for d in output.get("incorrect", [])],
-            )
-
-    elif tool_name == "get_google_search":
-        results = output.get("results", []) if isinstance(output, dict) else []
-        snippets = [
-            f"[{r.get('title','')}] {r.get('snippet','')} ({r.get('link','')})"
-            for r in results
-        ]
-        updates["web_search_results"] = list(state.web_search_results) + snippets
-
-    elif tool_name == "fetch_webpage_text":
-        if isinstance(output, dict) and output.get("text"):
-            text = f"[网页正文 | {output.get('url','')}]\n{output['text']}"
-            updates["web_search_results"] = list(state.web_search_results) + [text]
-
-    elif tool_name == "analyze_legal_issue":
-        if isinstance(output, dict):
-            updates["final_answer"] = output.get("final_answer", "")
-            updates["crag_context"] = output.get("crag_context", "")
-
-    elif tool_name == "markdown_to_pdf":
-        if isinstance(output, str) and "PDF" in output:
-            import re
-            m = re.search(r"文件路径[::]\s*(.+)", output)
-            if m:
-                updates["pdf_path"] = m.group(1).strip()
-                updates["is_pdf_output"] = True
-
-    return updates
-
-
-
-# 工具降级:不依赖 Flash LLM,直接参数映射
-
-def _invoke_tool_direct(tool_name: str, state: AgentState) -> dict:
-    """直接参数映射 + 调用工具(Flash LLM 调用失败时的降级路径)"""
-    tool = TOOL_BY_NAME[tool_name]
-    q = state.query
-
-    mapping = {
-        "retrieve_legal_knowledge": {"query": q, "top_k": 50, "rerank_top_n": 10},
-        "evaluate_case_relevance": {
-            "documents": [d.dict() for d in state.rag_documents] if state.rag_documents else []
-        },
-        "get_google_search": {"query": q},
-        "analyze_legal_issue": {
-            "query": q,
-            "correct_cases": [d.dict() for d in state.evaluation.correct],
-            "ambiguous_cases": [d.dict() for d in state.evaluation.ambiguous],
-            "web_results": list(state.web_search_results),
-        },
-        "markdown_to_pdf": {
-            "markdown_text": state.final_answer or "暂无内容",
-            "filename": f"legal_report_{q[:20]}.pdf",
-        },
-    }
-
-    raw = tool.invoke(mapping.get(tool_name, {"query": q}))
-    if isinstance(raw, str):
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return {"result": raw}
-    return raw
-
+# ── Flash LLM 降级:直接参数映射 ──
+_TOOL_FALLBACK_ARGS = {
+    "retrieve_legal_knowledge": lambda s: {
+        "query": s.query,
+        "top_k": 50,
+        "rerank_top_n": 10,
+    },
+    "evaluate_case_relevance": lambda s: {
+        "documents": [d.model_dump() for d in s.rag_documents]
+        if s.rag_documents
+        else []
+    },
+    "get_google_search": lambda s: {"query": s.query},
+    "analyze_legal_issue": lambda s: {
+        "query": s.query,
+        "correct_cases": [
+            d.model_dump() for d in (s.evaluation.correct if s.evaluation else [])
+        ],
+        "ambiguous_cases": [
+            d.model_dump() for d in (s.evaluation.ambiguous if s.evaluation else [])
+        ],
+        "web_results": list(s.web_search_results),
+    },
+    "markdown_to_pdf": lambda s: {
+        "markdown_text": s.final_answer or "暂无内容",
+        "filename": f"legal_report_{s.query[:20]}.pdf",
+    },
+}
 
 
 # Node 1: The Planner — Pro LLM 制定计划 + 思考链
@@ -189,9 +140,11 @@ def planner_node(state: AgentState) -> dict:
         return {"plan": [], "reasoning": ["无输入"], "final_answer": "请提供问题."}
     # 工具描述列表
     tools_desc = "\n".join(f"- {t.name}: {t.description[:120]}" for t in ALL_TOOLS)
-    
-    chain = PromptTemplate.from_template(PLANNER_SYSTEM) | llm_planner | StrOutputParser()
-    
+
+    chain = (
+        PromptTemplate.from_template(PLANNER_SYSTEM) | llm_planner | StrOutputParser()
+    )
+
     raw = chain.invoke({"query": query, "available_tools": tools_desc})
 
     # 解析 llm返回结果,提取计划和思考链;解析失败则返回默认计划
@@ -202,14 +155,26 @@ def planner_node(state: AgentState) -> dict:
             if raw.endswith("```"):
                 raw = raw[:-3]
         result = json.loads(raw)
-        
+
     except json.JSONDecodeError:
         return {
             "reasoning": ["Planner 输出解析失败,使用默认法律检索计划"],
             "plan": [
-                PlanStep(step_id=1, description="检索相关法律案例", tool_name="retrieve_legal_knowledge"),
-                PlanStep(step_id=2, description="评估检索质量", tool_name="evaluate_case_relevance"),
-                PlanStep(step_id=3, description="综合信息生成法律分析", tool_name="analyze_legal_issue"),
+                PlanStep(
+                    step_id=1,
+                    description="检索相关法律案例",
+                    tool_name="retrieve_legal_knowledge",
+                ),
+                PlanStep(
+                    step_id=2,
+                    description="评估检索质量",
+                    tool_name="evaluate_case_relevance",
+                ),
+                PlanStep(
+                    step_id=3,
+                    description="综合信息生成法律分析",
+                    tool_name="analyze_legal_issue",
+                ),
             ],
         }
     # 提取计划和思考链
@@ -221,11 +186,13 @@ def planner_node(state: AgentState) -> dict:
         tn = p.get("tool_name", "")
         if tn and tn not in TOOL_BY_NAME:
             tn = ""
-        plan.append(PlanStep(
-            step_id=p.get("step_id", len(plan) + 1),
-            description=p.get("description", ""),
-            tool_name=tn,
-        ))
+        plan.append(
+            PlanStep(
+                step_id=p.get("step_id", len(plan) + 1),
+                description=p.get("description", ""),
+                tool_name=tn,
+            )
+        )
 
     return {
         "plan": plan,
@@ -234,7 +201,6 @@ def planner_node(state: AgentState) -> dict:
         "replan_needed": False,
         "replan_reason": None,
     }
-
 
 
 # Node 2: The Executor — Flash LLM 执行单步骤,调用工具,自动映射参数;失败则降级直接调用工具
@@ -279,7 +245,6 @@ def executor_node(state: AgentState) -> dict:
 
     # ── 路径 A: Flash LLM 辅助调用 ──
     try:
-        # 状态摘要
         rag_summary = "暂无"
         if state.rag_documents:
             rag_summary = " | ".join(
@@ -297,7 +262,9 @@ def executor_node(state: AgentState) -> dict:
 
         web_summary = "暂无"
         if state.web_search_results:
-            web_summary = state.web_search_results[-3] if state.web_search_results else "暂无"
+            web_summary = (
+                state.web_search_results[-3] if state.web_search_results else "暂无"
+            )
 
         prompt = EXECUTOR_PROMPT.format(
             step_description=step.description,
@@ -314,34 +281,43 @@ def executor_node(state: AgentState) -> dict:
             for tc in response.tool_calls:
                 called = TOOL_BY_NAME.get(tc["name"])
                 if called:
-                    raw = called.invoke(tc["args"])
-                    tool_output = json.loads(raw) if isinstance(raw, str) else raw
+                    tool_output = called.invoke(tc["args"])
                     break
         else:
             raise RuntimeError("Flash LLM 未发起工具调用")
     except Exception as e:
         # ── 路径 B: 降级直接参数映射 ──
         try:
-            tool_output = _invoke_tool_direct(step.tool_name, state)
+            args_fn = _TOOL_FALLBACK_ARGS.get(
+                step.tool_name, lambda s: {"query": s.query}
+            )
+            tool_output = TOOL_BY_NAME[step.tool_name].invoke(args_fn(state))
         except Exception as e2:
             error_msg = f"{e} | 降级: {e2}"
 
     # 记录调用痕迹
-    state.tool_calls.append(ToolCallRecord(
-        step_id=step.step_id,
-        tool_name=step.tool_name,
-        input={"query": state.query},
-        output=tool_output,
-    ))
+    state.tool_calls.append(
+        ToolCallRecord(
+            step_id=step.step_id,
+            tool_name=step.tool_name,
+            input={"query": state.query},
+            output=tool_output,
+        )
+    )
 
-    # 合并结果到状态
+    # 合并工具输出到 AgentState
     state_updates: Dict[str, Any] = {
         "plan": plan,
         "tool_calls": state.tool_calls,
     }
 
-    if tool_output is not None:
-        state_updates.update(merge_tool_output(state, step.tool_name, tool_output))
+    if isinstance(tool_output, dict):
+        for k, v in tool_output.items():
+            if k in _STATE_KEYS:
+                if k == "web_search_results":
+                    state_updates[k] = list(state.web_search_results) + v
+                else:
+                    state_updates[k] = v
 
     step.status = "failed" if error_msg else "done"
     state_updates["current_step_index"] = idx + 1
@@ -349,7 +325,6 @@ def executor_node(state: AgentState) -> dict:
         state_updates["error"] = error_msg
 
     return state_updates
-
 
 
 # Node 3: Replan Check — 质量门控
@@ -369,7 +344,10 @@ def replan_check_node(state: AgentState) -> dict:
         needs = True
         reasons.append(state.replan_reason or "用户触发重规划")
 
-    if state.evaluation and state.evaluation.quality_verdict == "不足,建议进行网络搜索补充":
+    if (
+        state.evaluation
+        and state.evaluation.quality_verdict == "不足,建议进行网络搜索补充"
+    ):
         executed = {tc.tool_name for tc in state.tool_calls}
         if "get_google_search" not in executed:
             needs = True
@@ -383,7 +361,6 @@ def replan_check_node(state: AgentState) -> dict:
         "replan_needed": needs,
         "replan_reason": "; ".join(reasons) if reasons else None,
     }
-
 
 
 # Node 4: The Replanner — Pro LLM 重新规划
@@ -455,8 +432,16 @@ def replanner_node(state: AgentState) -> dict:
         result = json.loads(raw)
     except json.JSONDecodeError:
         default = [
-            PlanStep(step_id=len(state.plan) + 1, description="联网搜索补充", tool_name="get_google_search"),
-            PlanStep(step_id=len(state.plan) + 2, description="综合信息生成分析", tool_name="analyze_legal_issue"),
+            PlanStep(
+                step_id=len(state.plan) + 1,
+                description="联网搜索补充",
+                tool_name="get_google_search",
+            ),
+            PlanStep(
+                step_id=len(state.plan) + 2,
+                description="综合信息生成分析",
+                tool_name="analyze_legal_issue",
+            ),
         ]
         return {
             "plan": state.plan + default,
@@ -475,23 +460,27 @@ def replanner_node(state: AgentState) -> dict:
         tn = p.get("tool_name", "")
         if tn and tn not in TOOL_BY_NAME:
             tn = ""
-        new_steps.append(PlanStep(
-            step_id=base + len(new_steps) + 1,
-            description=p.get("description", ""),
-            tool_name=tn,
-        ))
+        new_steps.append(
+            PlanStep(
+                step_id=base + len(new_steps) + 1,
+                description=p.get("description", ""),
+                tool_name=tn,
+            )
+        )
 
     return {
         "plan": state.plan + new_steps,
-        "reasoning": state.reasoning + [f"[Replan] {state.replan_reason}"] + new_reasoning,
+        "reasoning": state.reasoning
+        + [f"[Replan] {state.replan_reason}"]
+        + new_reasoning,
         "replan_needed": False,
         "replan_reason": None,
         "error": None,
     }
 
 
-
 # Node 5: Finalize — 组装最终回答
+
 
 def finalize_node(state: AgentState) -> dict:
     """如果已有 final_answer 则直接使用；否则用已检索案例生成简要回答"""
@@ -508,7 +497,6 @@ def finalize_node(state: AgentState) -> dict:
         return {"final_answer": answer}
 
     return {"final_answer": "您好！请问有什么法律问题需要咨询？"}
-
 
 
 # 条件路由函数 (Conditional Edges)
@@ -531,6 +519,7 @@ def route_after_replan_check(state: AgentState) -> str:
 
 # 构建 Graph
 
+
 def build_graph():
     builder = StateGraph(AgentState)
 
@@ -543,17 +532,20 @@ def build_graph():
     builder.add_edge(START, "planner")
 
     builder.add_conditional_edges(
-        "planner", route_after_planner,
+        "planner",
+        route_after_planner,
         {"executor": "executor", "finalize": "finalize"},
     )
 
     builder.add_conditional_edges(
-        "executor", route_after_executor,
+        "executor",
+        route_after_executor,
         {"executor": "executor", "replan_check": "replan_check"},
     )
 
     builder.add_conditional_edges(
-        "replan_check", route_after_replan_check,
+        "replan_check",
+        route_after_replan_check,
         {"replanner": "replanner", "finalize": "finalize"},
     )
 
@@ -564,5 +556,3 @@ def build_graph():
 
 
 graph = build_graph()
-
-

@@ -8,7 +8,6 @@ RAG Agent 工具集
 
 Agent 可据此自主决策:检索 → 评估 → (如需)联网搜索 → 生成分析
 
-所有工具直接返回 dict,调用方按需自行转换.
 """
 
 import os
@@ -89,14 +88,14 @@ def retrieve_legal_knowledge(
     service = _get_rag_service()
     matches = service.search_withDenseSparse(
         query=query,
-        namespace= namespace ,
+        namespace=namespace,
         top_k=top_k,
         rerank_top_n=rerank_top_n,
         alpha=alpha,
     )
 
     if not matches:
-        return {"status": "empty", "message": "未检索到相关案例"}
+        return {"status": "empty", "message": "未检索到相关案例", "rag_documents": []}
 
     results = []
     for i, match in enumerate(matches):
@@ -115,7 +114,7 @@ def retrieve_legal_knowledge(
                 "chunk_text": meta.get("chunk_text", "")[:500],
             }
         )
-    return {"status": "success", "count": len(results), "results": results}
+    return {"status": "success", "count": len(results), "results": results, "rag_documents": results}
 
 
 # Tool 2: 检索质量评估 (CRAG 三档)
@@ -145,7 +144,7 @@ def evaluate_case_relevance(
     结构化 dict,含 correct/ambiguous/incorrect 分类及 quality_verdict
     """
     if not documents:
-        return {"error": "输入为空,没有可评估的文档"}
+        return {"error": "输入为空,没有可评估的文档", "evaluation": {}}
 
     correct, ambiguous, incorrect = [], [], []
 
@@ -174,6 +173,16 @@ def evaluate_case_relevance(
         "correct": correct,
         "ambiguous": ambiguous,
         "incorrect": incorrect,
+        "evaluation": {
+            "total": len(documents),
+            "correct_count": len(correct),
+            "ambiguous_count": len(ambiguous),
+            "incorrect_count": len(incorrect),
+            "quality_verdict": quality_verdict,
+            "correct": correct,
+            "ambiguous": ambiguous,
+            "incorrect": incorrect,
+        },
     }
 
 
