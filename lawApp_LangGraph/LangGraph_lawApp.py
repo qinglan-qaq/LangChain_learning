@@ -1,20 +1,20 @@
 """
 Plan & Execute Agent — 法律咨询智能体
 
-双 LLM 架构：
-  llm_planner  (DeepSeek Pro)   → 制定计划、重规划、给出思考过程
-  llm_executor (DeepSeek Flash)  → 按计划执行、调用工具、无需深度思考
+双 LLM 架构:
+    llm_planner  (DeepSeek Pro)   → 制定计划、重规划、给出思考过程
+    llm_executor (DeepSeek Flash)  → 按计划执行、调用工具、无需深度思考
 
 Graph 流程:
-  START → planner → executor (loop) → replan_check → finalize → END
+    START → planner → executor (loop) → replan_check → finalize → END
                 ↑                        ↓
                 └── replanner ←──────────┘ (质量不足 / 用户要求重规划)
 
 核心组件:
-  1. The Planner    — Pro LLM 分析问题 → JSON 计划 + 思考链
-  2. The Executor   — Flash LLM 逐步调用工具，自动映射参数
-  3. The Replanner  — Pro LLM 检查执行结果，不满则重新生成计划
-  4. Conditional Edges — 质量门控 / 循环控制
+    1. The Planner    — Pro LLM 分析问题 → JSON 计划 + 思考链
+    2. The Executor   — Flash LLM 逐步调用工具,自动映射参数
+    3. The Replanner  — Pro LLM 检查执行结果,不满则重新生成计划
+    4. Conditional Edges — 质量门控 / 循环控制
 """
 import json
 import os
@@ -32,9 +32,9 @@ from lawApp_LangGraph.tools import ALL_TOOLS
 
 load_dotenv()
 
-# ══════════════════════════════════════════════════════════════════════════════
+
 # 双 LLM 架构
-# ══════════════════════════════════════════════════════════════════════════════
+
 
 _llm_kwargs = dict(
     openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -43,28 +43,28 @@ _llm_kwargs = dict(
 
 llm_planner = ChatOpenAI(
     model=os.getenv("DEEPSEEK_PRO_MODEL", "deepseek-chat"),
-    temperature=0.3,
+    temperature=0.4,
     max_tokens=4096,
     **_llm_kwargs,
 )
 
 llm_executor = ChatOpenAI(
     model=os.getenv("DEEPSEEK_FLASH_MODEL", "deepseek-chat"),
-    temperature=0.1,
+    temperature=0.2,
     max_tokens=2048,
     **_llm_kwargs,
 )
 
-# Executor 绑定全部工具，支持 Function Calling
+
+# Executor 绑定全部工具,支持 Function Calling
 llm_executor_with_tools = llm_executor.bind_tools(ALL_TOOLS)
 
 # 工具名 → 工具对象
 TOOL_BY_NAME: Dict[str, Any] = {t.name: t for t in ALL_TOOLS}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 工具输出 → AgentState 字段映射
-# ══════════════════════════════════════════════════════════════════════════════
+
 
 def merge_tool_output(state: AgentState, tool_name: str, output: Any) -> Dict[str, Any]:
     """将工具返回的 dict 合并到 AgentState"""
@@ -112,7 +112,7 @@ def merge_tool_output(state: AgentState, tool_name: str, output: Any) -> Dict[st
     elif tool_name == "markdown_to_pdf":
         if isinstance(output, str) and "PDF" in output:
             import re
-            m = re.search(r"文件路径[：:]\s*(.+)", output)
+            m = re.search(r"文件路径[::]\s*(.+)", output)
             if m:
                 updates["pdf_path"] = m.group(1).strip()
                 updates["is_pdf_output"] = True
@@ -120,12 +120,12 @@ def merge_tool_output(state: AgentState, tool_name: str, output: Any) -> Dict[st
     return updates
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 工具降级：不依赖 Flash LLM，直接参数映射
-# ══════════════════════════════════════════════════════════════════════════════
+
+# 工具降级:不依赖 Flash LLM,直接参数映射
+
 
 def _invoke_tool_direct(tool_name: str, state: AgentState) -> dict:
-    """直接参数映射 + 调用工具（Flash LLM 调用失败时的降级路径）"""
+    """直接参数映射 + 调用工具(Flash LLM 调用失败时的降级路径)"""
     tool = TOOL_BY_NAME[tool_name]
     q = state.query
 
@@ -156,34 +156,33 @@ def _invoke_tool_direct(tool_name: str, state: AgentState) -> dict:
     return raw
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+
 # Node 1: The Planner — Pro LLM 制定计划 + 思考链
-# ══════════════════════════════════════════════════════════════════════════════
 
-PLANNER_SYSTEM = """\
-你是法律AI系统的任务规划师。分析用户问题，制定可执行的步骤计划。
+PLANNER_SYSTEM = """
+    你是法律AI系统的任务规划师.分析用户问题,制定可执行的步骤计划.
 
-## 可用工具
-{available_tools}
+    ## 可用工具
+    {available_tools}
 
-## 输出 JSON 格式
-{{
-  "reasoning": ["思考过程1", "思考过程2", ...],
-  "plan": [
-    {{"step_id": 1, "description": "步骤描述", "tool_name": "工具名"}},
-    ...
-  ]
-}}
+    ## 输出 JSON 格式
+    {{
+        "reasoning": ["思考过程1", "思考过程2", ...],
+        "plan": [
+            {{"step_id": 1, "description": "步骤描述", "tool_name": "工具名"}},
+            ...
+        ]
+    }}
 
-## 计划原则
-- 法律问题: retrieve_legal_knowledge → evaluate_case_relevance → analyze_legal_issue
-- 如评估结果为"不足": 插入 get_google_search / fetch_webpage_text 再分析
-- 简单闲聊: plan 为空数组 []
-- 用户要求 PDF 输出时才用 markdown_to_pdf
-- tool_name 必须是上述列表中的名称，不需要工具则填写 null
+    ## 计划原则
+    - 法律问题: retrieve_legal_knowledge → evaluate_case_relevance → analyze_legal_issue
+    - 如评估结果为"不足": 插入 get_google_search / fetch_webpage_text 再分析
+    - 简单闲聊: plan 为空数组 []
+    - 用户要求 PDF 输出时才用 markdown_to_pdf
+    - tool_name 必须是上述列表中的名称,不需要工具则填写 null
 
-## 用户问题
-{query}
+    ## 用户问题
+    {query}
 """
 
 
@@ -191,13 +190,15 @@ def planner_node(state: AgentState) -> dict:
     """Pro LLM: 分析问题 → JSON 计划 + 思考链"""
     query = state.query.strip()
     if not query:
-        return {"plan": [], "reasoning": ["无输入"], "final_answer": "请提供问题。"}
-
+        return {"plan": [], "reasoning": ["无输入"], "final_answer": "请提供问题."}
+    # 工具描述列表
     tools_desc = "\n".join(f"- {t.name}: {t.description[:120]}" for t in ALL_TOOLS)
+    
     chain = PromptTemplate.from_template(PLANNER_SYSTEM) | llm_planner | StrOutputParser()
+    
     raw = chain.invoke({"query": query, "available_tools": tools_desc})
 
-    # 解析 JSON
+    # 解析 llm返回结果,提取计划和思考链;解析失败则返回默认计划
     try:
         raw = raw.strip()
         if raw.startswith("```"):
@@ -205,16 +206,17 @@ def planner_node(state: AgentState) -> dict:
             if raw.endswith("```"):
                 raw = raw[:-3]
         result = json.loads(raw)
+        
     except json.JSONDecodeError:
         return {
-            "reasoning": ["Planner 输出解析失败，使用默认法律检索计划"],
+            "reasoning": ["Planner 输出解析失败,使用默认法律检索计划"],
             "plan": [
                 PlanStep(step_id=1, description="检索相关法律案例", tool_name="retrieve_legal_knowledge"),
                 PlanStep(step_id=2, description="评估检索质量", tool_name="evaluate_case_relevance"),
                 PlanStep(step_id=3, description="综合信息生成法律分析", tool_name="analyze_legal_issue"),
             ],
         }
-
+    # 提取计划和思考链
     reasoning = result.get("reasoning", [])
     plan_dicts = result.get("plan", [])
 
@@ -238,12 +240,11 @@ def planner_node(state: AgentState) -> dict:
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Node 2: The Executor — Flash LLM 执行单步
-# ══════════════════════════════════════════════════════════════════════════════
+
+# Node 2: The Executor — Flash LLM 执行单步骤,调用工具,自动映射参数;失败则降级直接调用工具
 
 EXECUTOR_PROMPT = """\
-你是执行器，只做一件事：调用指定的工具。
+你是执行器,只做一件事:调用指定的工具.
 
 当前步骤: {step_description}
 指定工具: {tool_name}
@@ -255,14 +256,14 @@ EXECUTOR_PROMPT = """\
 - 网络搜索: {web_summary}
 
 规则:
-1. 只调用 {tool_name}，不要调用其他工具
+1. 只调用 {tool_name},不要调用其他工具
 2. 从上下文和用户问题中提取参数
-3. 不要做推理，只需正确调用工具
+3. 不要做推理,只需正确调用工具
 """
 
 
 def executor_node(state: AgentState) -> dict:
-    """Flash LLM: 调用指定工具，更新状态；失败则自动降级为直接参数映射"""
+    """Flash LLM: 调用指定工具,更新状态;失败则自动降级为直接参数映射"""
     idx = state.current_step_index
     plan = state.plan
 
@@ -294,8 +295,8 @@ def executor_node(state: AgentState) -> dict:
         if state.evaluation and state.evaluation.total > 0:
             ev = state.evaluation
             eval_summary = (
-                f"共{ev.total}条，高质量{ev.correct_count}，中等{ev.ambiguous_count}，"
-                f"低质量{ev.incorrect_count}，结论: {ev.quality_verdict}"
+                f"共{ev.total}条,高质量{ev.correct_count},中等{ev.ambiguous_count},"
+                f"低质量{ev.incorrect_count},结论: {ev.quality_verdict}"
             )
 
         web_summary = "暂无"
@@ -354,13 +355,13 @@ def executor_node(state: AgentState) -> dict:
     return state_updates
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+
 # Node 3: Replan Check — 质量门控
-# ══════════════════════════════════════════════════════════════════════════════
+
 
 def replan_check_node(state: AgentState) -> dict:
     """
-    检查执行结果：
+    检查执行结果:
     - 用户要求重规划 (replan_needed)
     - 评估结果为"不足"但无联网搜索步骤
     - 执行出错
@@ -372,11 +373,11 @@ def replan_check_node(state: AgentState) -> dict:
         needs = True
         reasons.append(state.replan_reason or "用户触发重规划")
 
-    if state.evaluation and state.evaluation.quality_verdict == "不足，建议进行网络搜索补充":
+    if state.evaluation and state.evaluation.quality_verdict == "不足,建议进行网络搜索补充":
         executed = {tc.tool_name for tc in state.tool_calls}
         if "get_google_search" not in executed:
             needs = True
-            reasons.append("检索质量不足，需补联网搜索")
+            reasons.append("检索质量不足,需补联网搜索")
 
     if state.error:
         needs = True
@@ -388,12 +389,12 @@ def replan_check_node(state: AgentState) -> dict:
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+
 # Node 4: The Replanner — Pro LLM 重新规划
-# ══════════════════════════════════════════════════════════════════════════════
+
 
 REPLANNER_SYSTEM = """\
-你是任务规划师。基于已执行的步骤和当前结果，生成**补充步骤**。
+你是任务规划师.基于已执行的步骤和当前结果,生成**补充步骤**.
 
 ## 已执行步骤
 {executed_steps}
@@ -415,12 +416,12 @@ REPLANNER_SYSTEM = """\
 
 ## 输出 JSON
 {{
-  "reasoning": ["修正思路1", "修正思路2"],
-  "additional_steps": [
-    {{"step_id": {next_id}, "description": "...", "tool_name": "..."}}
-  ]
+    "reasoning": ["修正思路1", "修正思路2"],
+    "additional_steps": [
+        {{"step_id": {next_id}, "description": "...", "tool_name": "..."}}
+    ]
 }}
-只输出需要**新增**的步骤，不要重复已完成的步骤。
+只输出需要**新增**的步骤,不要重复已完成的步骤.
 """
 
 
@@ -493,9 +494,8 @@ def replanner_node(state: AgentState) -> dict:
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+
 # Node 5: Finalize — 组装最终回答
-# ══════════════════════════════════════════════════════════════════════════════
 
 def finalize_node(state: AgentState) -> dict:
     """如果已有 final_answer 则直接使用；否则用已检索案例生成简要回答"""
@@ -505,7 +505,7 @@ def finalize_node(state: AgentState) -> dict:
     if state.rag_documents:
         docs = "\n".join(f"- {d.chunk_text[:300]}" for d in state.rag_documents[:3])
         prompt = PromptTemplate.from_template(
-            "基于以下案例，简要回答用户问题。\n案例:\n{docs}\n\n问题: {query}\n\n法律建议:"
+            "基于以下案例,简要回答用户问题.\n案例:\n{docs}\n\n问题: {query}\n\n法律建议:"
         )
         chain = prompt | llm_executor | StrOutputParser()
         answer = chain.invoke({"docs": docs, "query": state.query})
@@ -514,9 +514,9 @@ def finalize_node(state: AgentState) -> dict:
     return {"final_answer": "您好！请问有什么法律问题需要咨询？"}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+
 # 条件路由函数 (Conditional Edges)
-# ══════════════════════════════════════════════════════════════════════════════
+
 
 def route_after_planner(state: AgentState) -> str:
     """有步骤 → executor | 无步骤 → finalize"""
@@ -533,9 +533,7 @@ def route_after_replan_check(state: AgentState) -> str:
     return "replanner" if state.replan_needed else "finalize"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 构建 Graph
-# ══════════════════════════════════════════════════════════════════════════════
 
 def build_graph():
     builder = StateGraph(AgentState)
@@ -572,45 +570,3 @@ def build_graph():
 graph = build_graph()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 执行入口
-# ══════════════════════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    test_query = "在离婚案件中，一方隐匿财产应该如何处理？"
-
-    print(f"输入问题: {test_query}\n{'=' * 60}")
-
-    final_state = None
-    for chunk in graph.stream({"query": test_query, "messages": []}):
-        node_name = list(chunk.keys())[0]
-        data = chunk[node_name]
-
-        if node_name == "planner" and "reasoning" in data:
-            print("\n[Planner 思考链]")
-            for r in data.get("reasoning", []):
-                print(f"  → {r}")
-
-        if "plan" in data:
-            steps = data["plan"]
-            if isinstance(steps, list) and steps:
-                print(f"\n[执行计划] ({len(steps)} 步)")
-                icons = {"pending": "⏳", "doing": "🔄", "done": "✅", "failed": "❌"}
-                for s in steps:
-                    st = getattr(s, "status", "pending")
-                    tn = getattr(s, "tool_name", "")
-                    d = getattr(s, "description", str(s))
-                    print(f"  {icons.get(st, '⏳')} 步骤{s.step_id}: {d} [{tn}]")
-
-        if data.get("replan_needed"):
-            print(f"\n[Replan 触发] {data.get('replan_reason', '')}")
-
-        final_state = chunk
-
-    if final_state:
-        rn = list(final_state.keys())[0]
-        sd = final_state[rn]
-        if isinstance(sd, dict) and sd.get("final_answer"):
-            print(f"\n{'=' * 60}\n[最终回答]\n{sd['final_answer'][:800]}...")
-
-    print("\n工作流完成！")
