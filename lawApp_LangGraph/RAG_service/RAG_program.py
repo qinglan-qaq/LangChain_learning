@@ -282,61 +282,51 @@ class RAG_service:
         :param alpha:
         :return:
         """
+        # 步骤0：入参校验
+        effective_n = max(1, int(rerank_top_n))
+        effective_top_k = max(effective_n, int(top_k))
 
-        progress = tqdm(total=400, desc="检索流程", unit="step")
-
-        progress.set_description("生成查询向量")
-
+        # 步骤1：获取查询的密集和稀疏向量
         dense_vec = self.embeddings.embed_query(query)
         sparse_vec = self.bm25.encode_queries(query)
 
-        for _ in range(100):
-            time.sleep(0.01)
-            progress.update(1)
-
         # 步骤2：混合召回
-        progress.set_description("混合召回中")
         results = self.index.query(
             vector=dense_vec,
             sparse_vector=sparse_vec,
             alpha=alpha,
             namespace=namespace,
-            top_k=top_k,
+            top_k=effective_top_k,
             include_metadata=True,
         )
         matches = results.matches
 
-        for _ in range(100):
-            time.sleep(0.01)
-            progress.update(1)
-
         if not matches:
-            progress.close()
             print("未检索到任何结果")
             return []
 
         # 步骤3：提取文本对
-        progress.set_description("提取文本对")
         texts = [m.metadata["chunk_text"] for m in matches]
         pairs = [[query, t] for t in texts]
 
-        for _ in range(100):
-            time.sleep(0.01)
-            progress.update(1)
-
         # 步骤4：重排序
-        progress.set_description("重排序中")
-        scores = self.reranker.predict(pairs)
+        try:
+            scores = self.reranker.predict(pairs)
+            scores = list(scores) if not isinstance(scores, list) else scores
+            scores = [float(s) for s in scores]
+        except Exception as e:
+            print(f"重排序失败,降级为原始混合排序: {e}")
+            return matches[:effective_n]
+
+        if len(scores) != len(matches):
+            print(f"重排序结果({len(scores)})与召回({len(matches)})不匹配,降级为原始排序")
+            return matches[:effective_n]
+
         for match, score in zip(matches, scores):
             match.rerank_score = score
+
         reranked = sorted(matches, key=lambda x: x.rerank_score, reverse=True)
-
-        for _ in range(100):
-            time.sleep(0.01)
-            progress.update(1)
-        progress.close()
-
-        return reranked[:rerank_top_n]
+        return reranked[:effective_n]
 
 
 # load_dotenv()
