@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -40,10 +41,18 @@ def _extract_pdf_path(markdown_output: str) -> Optional[str]:
 
 @app.post("/ask", response_model=QueryResponse)
 async def ask_question(request: QueryRequest):
-    """使用问答请求体处理用户问题，返回结构化结果。"""
+    """使用问答请求体处理用户问题，返回结构化结果。
+
+    session_id 作为 LangGraph thread_id 实现短期记忆:
+    - 客户端传入相同 session_id 可维持多轮对话上下文
+    - 不传则自动生成新会话
+    """
     try:
+        session_id = request.session_id or uuid.uuid4().hex
+        config = {"configurable": {"thread_id": session_id}}
+
         final_state = None
-        for chunk in graph.stream({"query": request.query, "messages": []}):
+        for chunk in graph.stream({"query": request.query, "messages": []}, config=config):
             final_state = chunk
 
         if not final_state:
@@ -57,6 +66,7 @@ async def ask_question(request: QueryRequest):
         return QueryResponse(
             query=request.query,
             final_answer=answer,
+            session_id=session_id,
             messages=[Message(**message) for message in final_state.get("messages", [])],
             crag_context=final_state.get("crag_context"),
             pdf_path=final_state.get("pdf_path"),
@@ -78,8 +88,11 @@ async def ask_question(request: QueryRequest):
 async def ask_question_pdf(request: QueryRequest):
     """生成 PDF 并返回下载文件。"""
     try:
+        session_id = request.session_id or uuid.uuid4().hex
+        config = {"configurable": {"thread_id": session_id}}
+
         final_state = None
-        for chunk in graph.stream({"query": request.query, "messages": []}):
+        for chunk in graph.stream({"query": request.query, "messages": []}, config=config):
             final_state = chunk
 
         if not final_state:

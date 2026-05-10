@@ -14,6 +14,7 @@ class Message(BaseModel):
 # 请求体模型
 class QueryRequest(BaseModel):
     query: str
+    session_id: Optional[str] = None  # 作为 thread_id 实现短期记忆,不传则自动生成
     message_id: Optional[str] = None
     timestamp: Optional[str] = None
 
@@ -22,6 +23,7 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     query: str
     final_answer: str
+    session_id: str = ""  # 当前会话 ID,客户端可保存用于多轮对话
     messages: List[Message] = Field(default_factory=list)
     crag_context: Optional[str] = None
     pdf_path: Optional[str] = None

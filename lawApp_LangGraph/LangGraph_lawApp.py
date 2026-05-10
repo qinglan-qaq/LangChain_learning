@@ -8,7 +8,7 @@ Plan & Execute Agent — 法律咨询智能体
 Graph 流程:
     START → planner → executor (loop) → replan_check → finalize → END
                 ↑                        ↓
-                └── replanner ←──────────┘ (质量不足 / 用户要求重规划)
+                └ replanner ←┘ (质量不足 / 用户要求重规划)
 
 核心组件:
     1. The Planner    — Pro LLM 分析问题 → JSON 计划 + 思考链
@@ -25,6 +25,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from lawApp_LangGraph.state import AgentState, PlanStep, ToolCallRecord
 from lawApp_LangGraph.tools import ALL_TOOLS
@@ -61,7 +62,7 @@ llm_executor_with_tools = llm_executor.bind_tools(ALL_TOOLS)
 TOOL_BY_NAME: Dict[str, Any] = {t.name: t for t in ALL_TOOLS}
 
 
-# ── 工具 → AgentState 字段合并 ──
+#  工具 → AgentState 字段合并 
 # 工具返回 dict 中与 AgentState 同名的 key 将被自动合并
 # web_search_results 特殊处理:追加而非覆盖
 _STATE_KEYS = {
@@ -74,7 +75,7 @@ _STATE_KEYS = {
     "is_pdf_output",
 }
 
-# ── Flash LLM 降级:直接参数映射 ──
+#  Flash LLM 降级:直接参数映射 
 _TOOL_FALLBACK_ARGS = {
     "retrieve_legal_knowledge": lambda s: {
         "query": s.query,
@@ -243,7 +244,7 @@ def executor_node(state: AgentState) -> dict:
     tool_output = None
     error_msg = None
 
-    # ── 路径 A: Flash LLM 辅助调用 ──
+    #  路径 A: Flash LLM 辅助调用 
     try:
         rag_summary = "暂无"
         if state.rag_documents:
@@ -286,7 +287,7 @@ def executor_node(state: AgentState) -> dict:
         else:
             raise RuntimeError("Flash LLM 未发起工具调用")
     except Exception as e:
-        # ── 路径 B: 降级直接参数映射 ──
+        #  路径 B: 降级直接参数映射 
         try:
             args_fn = _TOOL_FALLBACK_ARGS.get(
                 step.tool_name, lambda s: {"query": s.query}
@@ -520,7 +521,7 @@ def route_after_replan_check(state: AgentState) -> str:
 # 构建 Graph
 
 
-def build_graph():
+def build_graph(checkpointer=None):
     builder = StateGraph(AgentState)
 
     builder.add_node("planner", planner_node)
@@ -552,7 +553,8 @@ def build_graph():
     builder.add_edge("replanner", "executor")
     builder.add_edge("finalize", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
-graph = build_graph()
+checkpointer = MemorySaver()
+graph = build_graph(checkpointer=checkpointer)

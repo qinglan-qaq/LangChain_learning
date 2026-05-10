@@ -82,8 +82,8 @@ def retrieve_legal_knowledge(
     alpha: 混合检索中的权重参数,默认 0.5
     namespace: 检索的命名空间,默认 "legal_cases"
     返回:
-    结构化 dict,含 status / count / results 字段,
-    每个 result 为 RetrievedDocument 格式(case_number / case_cause / rerank_score / chunk_text 等)
+    结构化 dict,含 status / rag_documents 字段,
+    每个文档为 RetrievedDocument 格式(case_number / case_cause / rerank_score / chunk_text 等)
     """
     service = _get_rag_service()
     matches = service.search_withDenseSparse(
@@ -114,7 +114,7 @@ def retrieve_legal_knowledge(
                 "chunk_text": meta.get("chunk_text", "")[:500],
             }
         )
-    return {"status": "success", "count": len(results), "results": results, "rag_documents": results}
+    return {"status": "success", "count": len(results), "rag_documents": results}
 
 
 # Tool 2: 检索质量评估 (CRAG 三档)
@@ -137,14 +137,27 @@ def evaluate_case_relevance(
     Agent 应据此决定是否调用 get_google_search 进行联网补充.
 
     参数:
-    documents: retrieve_legal_knowledge 返回结果中的 results 列表
+    documents: retrieve_legal_knowledge 返回结果中的 rag_documents 列表
     每项含 rerank_score / chunk_text / case_number 等字段
 
     返回:
-    结构化 dict,含 correct/ambiguous/incorrect 分类及 quality_verdict
+    结构化 dict,含 evaluation 键,其值为 correct/ambiguous/incorrect 分类及 quality_verdict
     """
+    
     if not documents:
-        return {"error": "输入为空,没有可评估的文档", "evaluation": {}}
+        return {
+            "evaluation": {
+                "error": "输入为空,没有可评估的文档",
+                "total": 0,
+                "correct_count": 0,
+                "ambiguous_count": 0,
+                "incorrect_count": 0,
+                "quality_verdict": "不足,建议进行网络搜索补充",
+                "correct": [],
+                "ambiguous": [],
+                "incorrect": [],
+            }
+        }
 
     correct, ambiguous, incorrect = [], [], []
 
@@ -158,6 +171,7 @@ def evaluate_case_relevance(
             incorrect.append(doc)
 
     total_usable = len(correct) + len(ambiguous)
+    # 判断检索数量是否充足
     quality_verdict = (
         "充足"
         if len(correct) >= MIN_QUALITY_DOCS or total_usable >= MIN_QUALITY_DOCS
@@ -165,14 +179,6 @@ def evaluate_case_relevance(
     )
 
     return {
-        "total": len(documents),
-        "correct_count": len(correct),
-        "ambiguous_count": len(ambiguous),
-        "incorrect_count": len(incorrect),
-        "quality_verdict": quality_verdict,
-        "correct": correct,
-        "ambiguous": ambiguous,
-        "incorrect": incorrect,
         "evaluation": {
             "total": len(documents),
             "correct_count": len(correct),
@@ -182,7 +188,7 @@ def evaluate_case_relevance(
             "correct": correct,
             "ambiguous": ambiguous,
             "incorrect": incorrect,
-        },
+        }
     }
 
 
