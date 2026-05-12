@@ -7,11 +7,11 @@ from typing import Optional
 from lawApp_LangGraph.LangGraph_lawApp import graph
 from lawApp_LangGraph.FastAPI.model import QueryResponse, SourceInfo
 
-
+# 获取确保会话 ID
 def ensure_session(session_id: Optional[str]) -> str:
     return session_id or uuid.uuid4().hex
 
-
+# 调用 LangGraph
 async def invoke_graph(query: str, session_id: str) -> dict:
     config = {"configurable": {"thread_id": session_id}}
     return await graph.ainvoke({"query": query}, config=config)
