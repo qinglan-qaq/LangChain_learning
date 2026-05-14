@@ -73,6 +73,7 @@ _STATE_KEYS = {
     "web_search_results",
     "pdf_path",
     "is_pdf_output",
+    "memory_results",
 }
 
 #  Flash LLM 降级:直接参数映射 
@@ -125,6 +126,8 @@ PLANNER_SYSTEM = """
     ## 计划原则
     - 法律问题: retrieve_legal_knowledge → evaluate_case_relevance → analyze_legal_issue
     - 如评估结果为"不足": 插入 get_google_search / fetch_webpage_text 再分析
+    - 如用户提及之前讨论过的话题: 先用 search_memory 搜索历史记忆获取上下文
+    - 如用户表达了个人偏好/情况: 在生成最终回答后用 save_to_memory 保存 (memory_type='user_fact')
     - 简单闲聊: plan 为空数组 []
     - 用户要求 PDF 输出时才用 markdown_to_pdf
     - tool_name 必须是上述列表中的名称,不需要工具则填写 null

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /d f:\\\\Anaconda_env\\\\lawApp_langGraph)",
+      "Bash(python.exe -c \"import torch; print\\(torch.__version__\\)\")"
+    ]
+  }
+}

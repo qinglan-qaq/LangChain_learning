@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
-
 #  A. 工具返回层 — Tool Output Models
 
 
@@ -33,7 +32,6 @@ class RetrievedDocument(BaseModel):
     chunk_text: str = ""
 
 
-
 class EvaluationResult(BaseModel):
     """evaluate_case_relevance 工具返回 — CRAG 三档评估"""
 
@@ -46,7 +44,6 @@ class EvaluationResult(BaseModel):
     ambiguous: List[RetrievedDocument] = Field(default_factory=list)
     incorrect: List[RetrievedDocument] = Field(default_factory=list)
     error: Optional[str] = None
-
 
 
 #  B. 计划执行层 — Plan & Execute Models
@@ -116,6 +113,9 @@ class AgentState(BaseModel):
 
     # 扩展搜索与知识
     statute_results: List[Dict[str, Any]] = Field(default_factory=list)
+
+    # 长期记忆检索结果
+    memory_results: List[Dict[str, Any]] = Field(default_factory=list)
 
     # 原有 CRAG 管线兼容字段(LangGraph 路由用)
     is_law_questions: bool = False

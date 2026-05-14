@@ -7,9 +7,15 @@ from lawApp_LangGraph.tools.rag_tools import (
     evaluate_case_relevance,
     analyze_legal_issue,
 )
+from lawApp_LangGraph.tools.memory_tools import (
+    search_memory,
+    save_to_memory,
+)
 
 # Agent 可用的全部工具列表
 ALL_TOOLS = [
+    search_memory,
+    save_to_memory,
     get_google_search,
     markdown_to_pdf,
     retrieve_legal_knowledge,
