@@ -1,8 +1,8 @@
-import os
+import hashlib
 import re
 import time
 from typing import Any
-from dotenv import load_dotenv
+
 from langchain_community.document_loaders import TextLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import (
@@ -10,9 +10,9 @@ from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
 )
 from pinecone import Pinecone, ServerlessSpec
+from pinecone_text.hybrid import hybrid_convex_scale
 from pinecone_text.sparse import BM25Encoder
 from sentence_transformers import CrossEncoder
-from tqdm.notebook import tqdm
 
 
 class RAG_service:
@@ -46,7 +46,7 @@ class RAG_service:
         self.region = region
         self.dimension = dimension
         self.pc = Pinecone(api_key=api_key)
-        self.index = self.pc.Index(self.index_name)
+        self.index = None
 
         # 初始化工具
         headers_to_split_on = [("#", "Header_1")]
@@ -83,7 +83,6 @@ class RAG_service:
         :param wait_for_completion:
         :return:
         """
-        self.pc = Pinecone(api_key=self.api_key)
 
         # 混合索引的强制要求：metric 必须为 dotproduct,vector_type 为 dense
         target_metric = "dotproduct"
@@ -100,28 +99,20 @@ class RAG_service:
             )
         else:
             print(f"索引 '{self.index_name}' 已存在.")
-        # 等待索引就绪 异步处理
         if wait_for_completion:
             while not self.pc.describe_index(self.index_name).status.get(
                 "ready", False
             ):
                 time.sleep(2)
-            print(f"索引 '{self.index_name}' 已就绪.")
 
         self.index = self.pc.Index(self.index_name)
         print(f"索引 '{self.index_name}' 已就绪.")
-
         return True
 
     def get_index_stats(self):
-        """
-        获取索引是否创建成功
-        测试索引是否创建成功并打印统计信息
-        :return: 是否创建成功
-        """
         stats = self.index.describe_index_stats()
-        print("当前索引的状态: ", stats)
-        return True
+        print("当前索引状态:", stats)
+        return stats
 
     def get_Documents(self, file_path: str) -> list[Any] | None:
         """
@@ -154,12 +145,19 @@ class RAG_service:
         # 默认读取的为Document形式
         documents = loader.load()
 
+        # 统一换行符 (\r\n → \n), 避免跨平台正则匹配问题
+        raw_text = documents[0].page_content
+        raw_text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+
+        # 生成文件唯一标识 (取路径 MD5 前 8 位)
+        file_hash = hashlib.md5(file_path.encode()).hexdigest()[:8]
+
         # 按一级标题分割成多个案例
-        articles = self.md_splitter.split_text(documents[0].page_content)
+        articles = self.md_splitter.split_text(raw_text)
 
         # 获取元数据和正文内容
         for DocuID, article in enumerate(articles):
-            print(f"第{DocuID}篇文章获取中...")
+            print(f">> 第{DocuID}篇文章获取中...")
             # 元数据容器
             metadata = {}
 
@@ -169,7 +167,7 @@ class RAG_service:
 
             # 提取裁判书字号：匹配如（2023）最高法民终...号
             case_num_pattern = (
-                r"裁判书字号[\s\\n]+((?:(?!裁判书字号)[\s\S])+?法院[\s\S]+?书)"
+                r"裁判书字号\s+((?:(?!裁判书字号)[\s\S])+?法院[\s\S]+?书)"
             )
             case_num_match = re.search(case_num_pattern, article.page_content)
 
@@ -206,13 +204,17 @@ class RAG_service:
             for i, chunk in enumerate(chunks):
                 print(f"第{i}个记录创建中...")
                 # 独有的
-                record_id = f"annualCases{metadata['year']}_Docu{DocuID}_chunk{i}"
+                record_id = f"lawCase_{file_hash}_{DocuID}_chunk{i}"
 
                 # 密集向量
                 dense_vector = self.embeddings.embed_query(chunk)
 
                 # 返回 {"indices": [...], "values": [...]}
                 sparse_vector = self.bm25.encode_documents(chunk)
+
+                # 过滤空稀疏向量 (BM25 对极短文本可能返回空)
+                if not sparse_vector["values"] or not sparse_vector["indices"]:
+                    continue
 
                 """
                 添加内容: id 向量数据 元数据:{年份 判决书 案由 文档切片}
@@ -236,28 +238,61 @@ class RAG_service:
 
     def add_document(
         self,
-        Pinecone_records,
+        records: list,
         namespace: str,
+        batch_size: int = 50,
+        pause: float = 1.0,
+        max_retries: int = 3,
+        show_stats: bool = False,
     ):
+        """分批 upsert 到 Pinecone, 批次间暂停 pause 秒避免 API 限流。
+
+        :param records: 待上传的记录列表
+        :param namespace: Pinecone 命名空间
+        :param batch_size: 每批上传条数
+        :param pause: 批次间等待秒数
+        :param max_retries: 单批失败最大重试次数
+        :param show_stats: 是否在完成后打印索引统计
         """
-        添加分块好的文本到数据库中
-        :param Pinecone_records:
-        :param namespace:
-        :return:
-        """
-        # 分批上传,每批最多 50 条向量
-        batch_size = 50
-        total = len(Pinecone_records)
+        if self.index is None:
+            raise RuntimeError("索引未初始化, 请先调用 create_index()")
+
+        if not records:
+            print("  记录列表为空, 跳过上传")
+            return True
+
+        total = len(records)
+        success_count = 0
+        fail_count = 0
 
         for i in range(0, total, batch_size):
-            batch = Pinecone_records[i : i + batch_size]
-            self.index.upsert(vectors=batch, namespace=namespace)
+            batch = records[i : i + batch_size]
             uploaded = min(i + batch_size, total)
-            print(f"已上传 {uploaded}/{total} 条记录")
 
-        print(self.get_index_stats())
+            for attempt in range(1, max_retries + 1):
+                try:
+                    self.index.upsert(vectors=batch, namespace=namespace)
+                    success_count += len(batch)
+                    print(f"  已上传 {min(uploaded, total)}/{total} 条")
+                    break
+                except Exception as e:
+                    if attempt < max_retries:
+                        wait = 2**attempt
+                        print(
+                            f"  批次 [{i}-{uploaded}] 失败, {wait}s 后重试 ({attempt}/{max_retries}): {e}"
+                        )
+                        time.sleep(wait)
+                    else:
+                        fail_count += len(batch)
+                        print(f"  批次 [{i}-{uploaded}] 最终失败: {e}")
 
-        return True
+            if uploaded < total:
+                time.sleep(pause)
+
+        print(f"  上传完成: 成功 {success_count} 条, 失败 {fail_count} 条")
+        if show_stats:
+            self.get_index_stats()
+        return fail_count == 0
 
     def search_withDenseSparse(
         self,
@@ -283,6 +318,9 @@ class RAG_service:
         :return:
         """
         # 步骤0：入参校验
+        if self.index is None:
+            raise RuntimeError("索引未初始化, 请先调用 create_index()")
+
         effective_n = max(1, int(rerank_top_n))
         effective_top_k = max(effective_n, int(top_k))
 
@@ -290,11 +328,14 @@ class RAG_service:
         dense_vec = self.embeddings.embed_query(query)
         sparse_vec = self.bm25.encode_queries(query)
 
+        # 使用官方混合凸组合函数
+        weighted_dense, weighted_sparse = hybrid_convex_scale(
+            dense_vec, sparse_vec, alpha
+        )
         # 步骤2：混合召回
         results = self.index.query(
-            vector=dense_vec,
-            sparse_vector=sparse_vec,
-            alpha=alpha,
+            vector=weighted_dense,
+            sparse_vector=weighted_sparse,
             namespace=namespace,
             top_k=effective_top_k,
             include_metadata=True,
@@ -319,13 +360,18 @@ class RAG_service:
             return matches[:effective_n]
 
         if len(scores) != len(matches):
-            print(f"重排序结果({len(scores)})与召回({len(matches)})不匹配,降级为原始排序")
+            print(
+                f"重排序结果({len(scores)})与召回({len(matches)})不匹配,降级为原始排序"
+            )
             return matches[:effective_n]
 
-        for match, score in zip(matches, scores):
-            match.rerank_score = score
-
-        reranked = sorted(matches, key=lambda x: x.rerank_score, reverse=True)
+        # 组合得分与匹配对象成元组，按得分排序，再取出匹配对象 v9的特性
+        reranked = [
+            match
+            for match, _ in sorted(
+                zip(matches, scores), key=lambda pair: pair[1], reverse=True
+            )
+        ]
         return reranked[:effective_n]
 
 
