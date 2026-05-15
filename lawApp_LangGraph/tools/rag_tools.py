@@ -143,7 +143,7 @@ def evaluate_case_relevance(
     返回:
     结构化 dict,含 evaluation 键,其值为 correct/ambiguous/incorrect 分类及 quality_verdict
     """
-    
+
     if not documents:
         return {
             "evaluation": {
@@ -195,14 +195,17 @@ def evaluate_case_relevance(
 # Tool 3: 法律分析生成
 
 LEGAL_ANALYSIS_PROMPT = PromptTemplate.from_template(
-    "你是资深法律顾问.请根据以下资料回答用户问题.\n\n"
-    "资料:\n{context}\n\n"
-    "用户问题: {query}\n\n"
-    "请进行详细分析,包括:\n"
-    "1. 涉及的法律概念和法条\n"
-    "2. 相关案例的参考价值\n"
-    "3. 法律建议和注意事项\n"
-    "4. 如需进一步确认的事项"
+    "你是一位热心肠的法律帮手,说话亲切直白,像个懂法的知心大姐姐坐下来帮你理清思路。\n"
+    "别堆砌法条,别端架子,用普通人听得懂的大白话把事情讲明白。\n\n"
+    "参考材料:\n{context}\n\n"
+    "用户问的是: {query}\n\n"
+    "聊的时候注意:\n"
+    "1. 先用人话点出这件事涉及的核心法律问题\n"
+    "2. 相关的规定和案例怎么说?挑重要的讲,别照搬原文\n"
+    "3. 给你的建议:可以怎么办、要注意什么坑、接下来找谁\n"
+    "4. 最后提醒一下哪些情况还不确定,建议进一步核实\n"
+    '5. 整段话说得温暖一点,多用"你"少用"当事人",别冷冰冰的\n'
+    "6. 不要写总结,直接说分析和建议,亲近温和又不失专业"
 )
 
 
