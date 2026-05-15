@@ -36,7 +36,7 @@ def _get_rag_service():
         _rag_service = RAG_service(
             # TODO: 生产环境改为从安全配置中心获取,不要直接用环境变量 需要预先配置好
             index_name=os.getenv("PINECONE_INDEX_NAME", "pinecone-test-lawapp"),
-            api_key=os.getenv("PINECONE_API_KEY"),
+            api_key=os.getenv("PINECONE_API_KEY"), # type: ignore
             cloud=os.getenv("PINECONE_CLOUD", "aws"),
             region=os.getenv("PINECONE_REGION", "us-east-1"),
         )

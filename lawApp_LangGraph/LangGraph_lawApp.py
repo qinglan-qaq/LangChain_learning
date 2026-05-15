@@ -74,6 +74,7 @@ _STATE_KEYS = {
     "pdf_path",
     "is_pdf_output",
     "memory_results",
+    "memory_update",
 }
 
 #  Flash LLM 降级:直接参数映射 

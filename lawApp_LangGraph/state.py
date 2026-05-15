@@ -117,6 +117,9 @@ class AgentState(BaseModel):
     # 长期记忆检索结果
     memory_results: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # 长期记忆写入确认
+    memory_update: Optional[Dict[str, Any]] = None
+
     # 原有 CRAG 管线兼容字段(LangGraph 路由用)
     is_law_questions: bool = False
     is_simple_questions: bool = False

@@ -114,9 +114,9 @@ def search_memory(query: str, top_k: int = 3) -> dict:
     ]
 
     return {
+        "memory_results": memories, 
         "status": "success" if memories else "empty",
         "count": len(memories),
-        "memories": memories,
     }
 
 
@@ -162,11 +162,13 @@ def save_to_memory(
 
     # 嵌入用文本: summary 优先, 否则用 content 截断
     embed_text = (summary or content).strip()
+    
     is_truncated = False
     if len(embed_text) > MAX_EMBED_LEN:
         embed_text = embed_text[:MAX_EMBED_LEN]
         is_truncated = True
 
+    # 生成嵌入向量
     embedder = _get_embedder()
     embedding = embedder.encode(embed_text, normalize_embeddings=True).tolist()
 
@@ -197,9 +199,12 @@ def save_to_memory(
     msg += ")"
 
     return {
+        "memory_update": {
+            "id": new_id,
+            "memory_type": memory_type,
+            "is_truncated": is_truncated,
+            "summary": embed_text,
+        },
         "status": "success",
-        "id": new_id,
-        "memory_type": memory_type,
-        "is_truncated": is_truncated,
         "message": msg,
     }
