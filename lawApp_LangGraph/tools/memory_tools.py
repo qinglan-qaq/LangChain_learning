@@ -9,7 +9,6 @@ Agent 可在关键节点调用这些工具,实现跨会话的知识积累。
 
 import os
 from typing import Optional
-
 import psycopg2
 from langchain_core.tools import tool
 from sentence_transformers import SentenceTransformer
@@ -19,6 +18,7 @@ _embedder = None
 _conn = None
 
 
+# 私有方法新建一个单例 SentenceTransformer 实例 嵌入模型
 def _get_embedder() -> SentenceTransformer:
     global _embedder
     if _embedder is None:
@@ -28,15 +28,16 @@ def _get_embedder() -> SentenceTransformer:
     return _embedder
 
 
+# 私有方法新建一个单例 PostgreSQL 连接实例
 def _get_conn():
     global _conn
     if _conn is None:
         _conn = psycopg2.connect(
-            dbname=os.getenv("DB_NAME", "Law_app"),
-            user=os.getenv("DB_USER", "my_pgsql"),
-            password=os.getenv("DB_PASSWORD", "123123"),
-            host=os.getenv("DB_HOST", "localhost"),
-            port=int(os.getenv("DB_PORT", "5433")),
+            dbname=os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT"),
         )
     return _conn
 
@@ -62,13 +63,10 @@ def ensure_memory_table():
     cur.close()
 
 
-# =
 # Tool A: 搜索记忆
-# =
-
 
 @tool
-def search_memory(query: str, top_k: int = 5) -> dict:
+def search_memory(query: str, top_k: int = 3) -> dict:
     """搜索长期记忆库,召回与当前问题相关的历史信息。
 
     适用场景:
@@ -86,6 +84,7 @@ def search_memory(query: str, top_k: int = 5) -> dict:
     ensure_memory_table()
 
     embedder = _get_embedder()
+    # 问题向量化
     query_vec = embedder.encode(query, normalize_embeddings=True).tolist()
 
     conn = _get_conn()
@@ -121,9 +120,12 @@ def search_memory(query: str, top_k: int = 5) -> dict:
     }
 
 
-# =
+
 # Tool B: 保存记忆
-# =
+
+
+
+MAX_EMBED_LEN = 512  # 嵌入文本上限, 超出自动截断
 
 
 @tool
@@ -131,9 +133,14 @@ def save_to_memory(
     content: str,
     memory_type: str = "general",
     thread_id: str = "default",
+    summary: Optional[str] = None,
     metadata: Optional[dict] = None,
 ) -> dict:
     """将重要信息保存到长期记忆库,供未来会话使用。
+
+    关键: content 是完整原文(存 metadata), summary 是简短摘要(用于向量检索)。
+    请自行提供一句话 summary,避免长文本被嵌入后拉高 token 成本。
+    如果不传 summary 且 content 较短(<512字),则直接用 content 做嵌入。
 
     适用场景:
     - 用户明确表达了偏好或需求
@@ -142,22 +149,33 @@ def save_to_memory(
     - 法律咨询的关键结论
 
     参数:
-    content: 要保存的记忆文本
+    content: 要保存的完整记忆文本
+    summary: 简短摘要(1-2句),用于语义搜索匹配。不传则用 content 截断
     memory_type: 记忆类型,如 'user_fact' / 'legal_preference' / 'conclusion' / 'general'
     thread_id: 会话线程标识,默认 'default'
     metadata: 附加元数据,如 {'law_title': '民法典', 'article': '第一千零四十二条'}
 
     返回:
-    dict, 含 status / id / memory_type
+    dict, 含 status / id / memory_type / is_truncated
     """
     ensure_memory_table()
 
+    # 嵌入用文本: summary 优先, 否则用 content 截断
+    embed_text = (summary or content).strip()
+    is_truncated = False
+    if len(embed_text) > MAX_EMBED_LEN:
+        embed_text = embed_text[:MAX_EMBED_LEN]
+        is_truncated = True
+
     embedder = _get_embedder()
-    embedding = embedder.encode(content, normalize_embeddings=True).tolist()
+    embedding = embedder.encode(embed_text, normalize_embeddings=True).tolist()
 
     import json
 
-    meta_json = json.dumps(metadata or {}, ensure_ascii=False)
+    # 完整原文存 metadata, 搜索时才不会拉回大段文本
+    meta = metadata or {}
+    if summary:
+        meta["full_content"] = content
 
     conn = _get_conn()
     cur = conn.cursor()
@@ -167,15 +185,21 @@ def save_to_memory(
         VALUES (%s, %s, %s, %s, %s)
         RETURNING id
         """,
-        (thread_id, memory_type, content, embedding, meta_json),
+        (thread_id, memory_type, embed_text, embedding, json.dumps(meta, ensure_ascii=False)),
     )
     new_id = cur.fetchone()[0]
     conn.commit()
     cur.close()
 
+    msg = f"记忆已保存 (id={new_id}, type={memory_type}"
+    if is_truncated:
+        msg += f", 嵌入文本已截断至 {MAX_EMBED_LEN} 字"
+    msg += ")"
+
     return {
         "status": "success",
         "id": new_id,
         "memory_type": memory_type,
-        "message": f"记忆已保存 (id={new_id}, type={memory_type})",
+        "is_truncated": is_truncated,
+        "message": msg,
     }
