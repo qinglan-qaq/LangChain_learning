@@ -8,15 +8,12 @@ Agent 工具集 — 网络搜索与 PDF 生成
 """
 import os
 from datetime import datetime
-
 import markdown
 from langchain_community.utilities import SerpAPIWrapper
 from langchain_core.tools import tool
 
 
-# ============================================================================
 # Tool 1: 谷歌搜索
-# ============================================================================
 
 
 @tool
