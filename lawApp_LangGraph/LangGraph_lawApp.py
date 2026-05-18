@@ -37,18 +37,21 @@ load_dotenv()
 
 # 双 LLM 架构
 
+# LLM 配置 —— 使用环境变量配置 DeepSeek API Key 和模型名称
 _llm_kwargs = dict(
     openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
     openai_api_base=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
 )
 
+# Planner规划节点的llm — 生成计划和思考链,需要更强的推理能力
 llm_planner = ChatOpenAI(
-    model=os.getenv("DEEPSEEK_PRO_MODEL", "deepseek-chat"),
+    model=os.getenv("DEEPSEEK_PRO_MODEL"),
     temperature=0.4,
     max_tokens=4096,
     **_llm_kwargs,
 )
 
+# Executor执行节点的llm — 只需正确调用工具,使用更轻量的模型以降低成本和延迟
 llm_executor = ChatOpenAI(
     model=os.getenv("DEEPSEEK_FLASH_MODEL", "deepseek-chat"),
     temperature=0.25,
@@ -152,10 +155,10 @@ def planner_node(state: AgentState) -> dict:
 
     tools_desc = "\n".join(f"- {t.name}: {t.description[:120]}" for t in ALL_TOOLS)
 
+    # 链式执行生成计划与思考链
     chain = (
         PromptTemplate.from_template(PLANNER_SYSTEM) | llm_planner | StrOutputParser()
     )
-
     raw = chain.invoke({"query": query, "available_tools": tools_desc})
 
     # 解析 llm返回结果,提取计划和思考链;解析失败则返回默认计划
@@ -224,7 +227,7 @@ def planner_node(state: AgentState) -> dict:
 
 # Node 2: The Executor — Flash LLM 执行单步骤,调用工具,自动映射参数;失败则降级直接调用工具
 
-EXECUTOR_PROMPT = """\
+EXECUTOR_PROMPT = """
 你是执行器,只做一件事:调用指定的工具.
 
 当前步骤: {step_description}
@@ -246,7 +249,9 @@ EXECUTOR_PROMPT = """\
 def executor_node(state: AgentState) -> dict:
     """Flash LLM: 调用指定工具,更新状态;失败则自动降级为直接参数映射"""
     t0 = time.time()
+    # 当前步骤数
     idx = state.current_step_index
+    # 规划节点列出的计划
     plan = state.plan
 
     if idx >= len(plan):
@@ -283,7 +288,7 @@ def executor_node(state: AgentState) -> dict:
                 f"[{d.rerank_score:.2f}] {d.chunk_text[:100]}..."
                 for d in state.rag_documents[:3]
             )
-
+        # 评估结果摘要
         eval_summary = "未评估"
         if state.evaluation and state.evaluation.total > 0:
             ev = state.evaluation
@@ -291,7 +296,7 @@ def executor_node(state: AgentState) -> dict:
                 f"共{ev.total}条,高质量{ev.correct_count},中等{ev.ambiguous_count},"
                 f"低质量{ev.incorrect_count},结论: {ev.quality_verdict}"
             )
-
+        # 网络搜索摘要
         web_summary = "暂无"
         if state.web_search_results:
             web_summary = (
@@ -308,6 +313,14 @@ def executor_node(state: AgentState) -> dict:
         )
 
         debug.debug("Executor 调用 Flash LLM", detail=f"tool={step.tool_name}")
+        
+        """
+        这里是当前Executor节点的核心操作逻辑:
+        在此之前,Planner节点已经生成了一个包含步骤描述和工具名称的计划
+        Executor节点根据当前步骤的工具名称构造提示词.
+        调用 llm_executor_with_tools.invoke() 
+        让 Flash LLM 根据提示词分析当前步骤和上下文,自动提取参数并调用指定工具
+        """
         response = llm_executor_with_tools.invoke([SystemMessage(content=prompt)])
 
         if isinstance(response, AIMessage) and response.tool_calls:
@@ -390,7 +403,7 @@ def executor_node(state: AgentState) -> dict:
 
 # Node 3: Replan Check — Flash LLM 质量门控
 
-REPLAN_CHECK_PROMPT = """\
+REPLAN_CHECK_PROMPT = """
 你是法律AI系统的质量审核员。检查已执行步骤的结果，判断当前信息是否足以生成高质量的法律回答。
 
 ## 用户原始问题
@@ -456,6 +469,8 @@ def replan_check_node(state: AgentState) -> dict:
         chain = PromptTemplate.from_template(prompt) | llm_executor | StrOutputParser()
         raw = chain.invoke({})
         raw = raw.strip()
+        
+        # 提取JSON部分,兼容 LLM 输出中夹带文本的情况
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1]
             if raw.endswith("```"):
@@ -507,8 +522,7 @@ def _fallback_replan_check(state: AgentState) -> tuple[bool, str]:
 # Node 4: The Replanner — Pro LLM 重新规划
 
 
-REPLANNER_SYSTEM = 
-"""
+REPLANNER_SYSTEM = """
 你是任务规划师.基于已执行的步骤和当前结果,生成**补充步骤**.
 
 ## 已执行步骤

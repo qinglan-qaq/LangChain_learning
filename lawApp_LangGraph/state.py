@@ -52,16 +52,20 @@ class EvaluationResult(BaseModel):
 class PlanStep(BaseModel):
     """计划中的单个步骤"""
 
+    # 步骤编号(从1开始)
     step_id: int
+    # 步骤描述LLM 生成的自然语言描述
     description: str
+    # 计划执行的工具名称
     tool_name: Optional[str] = None
-    status: str = "pending"  #  pending | doing | done | failed
-    retry_count: int = 0  #  失败重试次数
+    # 步骤状态: pending(未执行) | doing(执行中) | done(成功) | failed(失败)
+    status: str = "pending"
+    # 失败重试次数
+    retry_count: int = 0
 
 
 class ToolCallRecord(BaseModel):
     """单次工具调用的记录"""
-
     step_id: int
     tool_name: str
     tool_input: Dict[str, Any] = Field(default_factory=dict)
@@ -70,7 +74,6 @@ class ToolCallRecord(BaseModel):
 
 
 #  C. 顶层 — AgentState(Plan & Execute Agent)
-
 
 class AgentState(BaseModel):
     """Plan & Execute Agent 的全局状态"""
@@ -95,7 +98,7 @@ class AgentState(BaseModel):
     current_step_index: int = 0
     replan_needed: bool = False
     replan_reason: Optional[str] = None
-    
+
     # 最终回答结果
     final_answer: str = ""
 
@@ -107,13 +110,13 @@ class AgentState(BaseModel):
 
     # RAG检索结果
     rag_documents: List[RetrievedDocument] = Field(default_factory=list)
-    
+
     # 评估结果
     evaluation: EvaluationResult = Field(default_factory=EvaluationResult)
-    
+
     # 网络检索结果
     web_search_results: List[str] = Field(default_factory=list)
-    
+
     # 拼装后的 CRAG 上下文
     crag_context: str = ""
 
