@@ -148,7 +148,7 @@ def planner_node(state: AgentState) -> dict:
 
     if not query:
         debug.info("← Planner 退出", detail="空输入", result="返回默认提示")
-        return {"plan": [], "reasoning": ["无输入"], "final_answer": "请提供问题."}
+        return {"plan": [], "reasoning": ["无输入"], "final_answer": "抱一丝,你能再说一遍吗?"}
 
     tools_desc = "\n".join(f"- {t.name}: {t.description[:120]}" for t in ALL_TOOLS)
 
@@ -388,59 +388,127 @@ def executor_node(state: AgentState) -> dict:
     return state_updates
 
 
-# Node 3: Replan Check — 质量门控
+# Node 3: Replan Check — Flash LLM 质量门控
+
+REPLAN_CHECK_PROMPT = """\
+你是法律AI系统的质量审核员。检查已执行步骤的结果，判断当前信息是否足以生成高质量的法律回答。
+
+## 用户原始问题
+{user_query}
+
+## 已执行步骤及结果
+{executed_summary}
+
+## 当前数据状态
+- 检索到的案例数量: {doc_count}
+- 案例质量评估: {quality_verdict}
+- 网络搜索补充: {web_count} 条
+- 执行错误: {error_info}
+
+## 判断标准
+1. 如果已检索到相关案例且质量评估为"充足" → 不需要重规划
+2. 如果检索结果为空或质量评估为"不足"，且尚未进行网络搜索 → 需要重规划（补充 get_google_search）
+3. 如果执行中出现了无法恢复的错误 → 需要重规划
+4. 如果已有 final_answer 或 analyze_legal_issue 已成功执行 → 不需要重规划
+5. 如果已有足够案例且进行了法律分析 → 不需要重规划
+
+## 输出 JSON
+{{
+    "needs_replan": false,
+    "reason": "简短说明判断依据,不超过50字"
+}}
+"""
 
 
 def replan_check_node(state: AgentState) -> dict:
-    """
-    检查执行结果:
-    - 用户要求重规划 (replan_needed)
-    - 评估结果为"不足"但无联网搜索步骤
-    - 执行出错
-    """
-    debug.debug("→ 进入 Replan Check 节点", detail="检查执行质量...")
-    needs = False
-    reasons = []
+    """Flash LLM: 分析已执行步骤的结果,语义级判断是否需要重规划"""
+    t0 = time.time()
+    debug.debug("→ 进入 Replan Check 节点 (Flash LLM)", detail="LLM 语义判断执行质量...")
 
-    if state.replan_needed:
-        needs = True
-        reasons.append(state.replan_reason or "用户触发重规划")
+    # 拼装已执行步骤摘要executed_summary
+    steps_desc: list[str] = []
+    for s in state.plan:
+        status_label = "✓" if s.status == "done" else "✗" if s.status == "failed" else "⋯"
+        steps_desc.append(
+            f"[{status_label}] 步骤{s.step_id}: {s.description} → 工具: {s.tool_name or '无'}"
+        )
+    executed_summary = "\n".join(steps_desc) if steps_desc else "无已执行步骤"
 
+    # 评估结论
+    quality_verdict = "未评估"
+    if state.evaluation and state.evaluation.total > 0:
+        ev = state.evaluation
+        quality_verdict = (
+            f"{ev.quality_verdict} (共{ev.total}条, "
+            f"高质量{ev.correct_count}, 中等{ev.ambiguous_count}, 低质量{ev.incorrect_count})"
+        )
+
+    prompt = REPLAN_CHECK_PROMPT.format(
+        user_query=state.query,
+        executed_summary=executed_summary,
+        doc_count=len(state.rag_documents),
+        quality_verdict=quality_verdict,
+        web_count=len(state.web_search_results),
+        error_info=state.error or "无",
+    )
+
+    try:
+        chain = PromptTemplate.from_template(prompt) | llm_executor | StrOutputParser()
+        raw = chain.invoke({})
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+        result = json.loads(raw)
+        needs = result.get("needs_replan", False)
+        reason = result.get("reason", "")
+    except Exception as e:
+        # 降级: LLM 判断失败时回退到规则判断
+        debug.warning(
+            "Replan Check LLM 解析失败,降级为规则判断",
+            detail=str(e),
+        )
+        needs, reason = _fallback_replan_check(state)
+
+    elapsed = time.time() - t0
+    if needs:
+        debug.info(
+            "← Replan Check: 需要重规划",
+            detail=reason,
+            result=f"elapsed={elapsed:.2f}s | → Replanner",
+        )
+    else:
+        debug.info(
+            "← Replan Check: 质量通过",
+            detail=reason,
+            result=f"elapsed={elapsed:.2f}s | → Finalize",
+        )
+    return {
+        "replan_needed": needs,
+        "replan_reason": reason or None,
+    }
+
+
+def _fallback_replan_check(state: AgentState) -> tuple[bool, str]:
+    """规则兜底判断 —— LLM 解析失败时使用"""
+    if state.error:
+        return True, f"执行异常: {state.error}"
     if (
         state.evaluation
         and state.evaluation.quality_verdict == "不足,建议进行网络搜索补充"
     ):
         executed = {tc.tool_name for tc in state.tool_calls}
         if "get_google_search" not in executed:
-            needs = True
-            reasons.append("检索质量不足,需补联网搜索")
-
-    if state.error:
-        needs = True
-        reasons.append(f"执行异常: {state.error}")
-
-    if needs:
-        debug.info(
-            "← Replan Check: 需要重规划",
-            detail="; ".join(reasons),
-            result="→ 路由到 Replanner",
-        )
-    else:
-        debug.info(
-            "← Replan Check: 质量通过",
-            detail=f"已执行{len(state.tool_calls)}个工具",
-            result="→ 路由到 Finalize",
-        )
-    return {
-        "replan_needed": needs,
-        "replan_reason": "; ".join(reasons) if reasons else None,
-    }
+            return True, "检索质量不足,需补联网搜索"
+    return False, "规则兜底: 无明显问题"
 
 
 # Node 4: The Replanner — Pro LLM 重新规划
 
 
-REPLANNER_SYSTEM = """
+REPLANNER_SYSTEM = 
+"""
 你是任务规划师.基于已执行的步骤和当前结果,生成**补充步骤**.
 
 ## 已执行步骤
