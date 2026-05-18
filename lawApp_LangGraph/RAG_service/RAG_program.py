@@ -15,6 +15,7 @@ from pinecone_text.hybrid import hybrid_convex_scale
 from pinecone_text.sparse import BM25Encoder
 from sentence_transformers import CrossEncoder
 from lawApp_LangGraph.FastAPI.logging import rag as rag_log
+from pinecone_text.sparse import SparseVector
 
 load_dotenv()
 
@@ -346,10 +347,16 @@ class RAG_service:
             detail=f"dense_dim={len(dense_vec)}",
             result=f"elapsed={time.time() - t_embed:.2f}s",
         )
+        
+        # 将 dict 显式转换为 SparseVector 对象
+        sparse_vec_obj = SparseVector(
+            indices=sparse_vec["indices"],
+            values=sparse_vec["values"],
+        )
 
         # 使用官方混合凸组合函数
         weighted_dense, weighted_sparse = hybrid_convex_scale(
-            dense_vec, sparse_vec, alpha
+            dense_vec, sparse_vec_obj, alpha
         )
 
         # 步骤2：混合召回
@@ -423,14 +430,3 @@ class RAG_service:
         return reranked[:effective_n]
 
 
-# # 实例化测试
-# service = RAG_service(
-#     index_name="pinecone-test-lawapp",
-#     api_key=os.getenv("PINECONE_API_KEY"),
-#     cloud="aws",
-#     region="us-east-1",
-# )
-
-# result = service.get_Documents(
-#     "../MarkDownFiles/中国法院2020年度案例：婚姻家庭与继承纠纷.md"
-# )
