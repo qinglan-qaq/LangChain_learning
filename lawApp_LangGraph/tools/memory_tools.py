@@ -14,7 +14,7 @@ import psycopg2
 from langchain_core.tools import tool
 from sentence_transformers import SentenceTransformer
 
-from lawApp_LangGraph.FastAPI.logging import tool as tool_log, sys_log
+from lawApp_LangGraph.FastAPI.logging import tool as tool_log, system as sys_log
 
 # ---- 懒加载单例 ----
 _embedder = None

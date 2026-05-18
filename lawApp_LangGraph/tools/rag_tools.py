@@ -51,7 +51,13 @@ def _get_rag_service():
             cloud=os.getenv("PINECONE_CLOUD", "aws"),
             region=os.getenv("PINECONE_REGION", "us-east-1"),
         )
+        
+        # RAG_service 初始化时会自动创建索引并加载模型,这里等待索引创建完成并返回状态
+        _rag_service.create_index(wait_for_completion=True)
+        _rag_service.get_index_stats()
+        
         sys_log.info("RAG_service 初始化完成", result="嵌入 + 重排序 + BM25 模型已就绪")
+        
     return _rag_service
 
 
@@ -74,9 +80,9 @@ def _get_llm():
 @tool
 def retrieve_legal_knowledge(
     query: str,
-    top_k: int = 30,
-    rerank_top_n: int = 10,
-    alpha: float = 0.5,
+    top_k: int = 20,
+    rerank_top_n: int = 5,
+    alpha: float = 0.7,
     namespace: str = "legal_cases",
 ) -> dict:
     """从法律案例库中检索相关判例.使用混合检索(语义向量 + BM25 关键词匹配)与
@@ -89,9 +95,9 @@ def retrieve_legal_knowledge(
 
     参数:
     query: 法律问题查询语句,中文
-    top_k: 初始召回数量,默认 30
-    rerank_top_n: 重排序后返回数量,默认 10
-    alpha: 混合检索中的权重参数,默认 0.5
+    top_k: 初始召回数量,默认 20
+    rerank_top_n: 重排序后返回数量,默认 5 (从 top_k 中选出最相关的 5 条)
+    alpha: 混合检索中的权重参数,默认 0.7 (越接近 1 越重视语义匹配,越接近 0 越重视关键词匹配)
     namespace: 检索的命名空间,默认 "legal_cases"
     返回:
     结构化 dict,含 status / rag_documents 字段,
@@ -240,17 +246,11 @@ def evaluate_case_relevance(
 # Tool 3: 法律分析生成
 
 LEGAL_ANALYSIS_PROMPT = PromptTemplate.from_template(
-    "你是一位热心肠的法律帮手,说话亲切直白,像个懂法的知心大姐姐坐下来帮你理清思路。\n"
+    ""
     "别堆砌法条,别端架子,用普通人听得懂的大白话把事情讲明白。\n\n"
     "参考材料:\n{context}\n\n"
     "用户问的是: {query}\n\n"
-    "聊的时候注意:\n"
-    "1. 先用人话点出这件事涉及的核心法律问题\n"
-    "2. 相关的规定和案例怎么说?挑重要的讲,别照搬原文\n"
-    "3. 给你的建议:可以怎么办、要注意什么坑、接下来找谁\n"
-    "4. 最后提醒一下哪些情况还不确定,建议进一步核实\n"
-    '5. 整段话说得温暖一点,多用"你"少用"当事人",别冷冰冰的\n'
-    "6. 不要写总结,直接说分析和建议,亲近温和又不失专业"
+    
 )
 
 

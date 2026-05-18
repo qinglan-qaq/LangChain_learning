@@ -3,6 +3,7 @@ import re
 import time
 from typing import Any
 
+from dotenv import load_dotenv
 from langchain_community.document_loaders import TextLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import (
@@ -13,8 +14,9 @@ from pinecone import Pinecone, ServerlessSpec
 from pinecone_text.hybrid import hybrid_convex_scale
 from pinecone_text.sparse import BM25Encoder
 from sentence_transformers import CrossEncoder
+from lawApp_LangGraph.FastAPI.logging import rag as rag_log
 
-from lawApp_LangGraph.FastAPI.logging import rag as rag_log, sys_log
+load_dotenv()
 
 
 class RAG_service:
@@ -367,7 +369,11 @@ class RAG_service:
         )
 
         if not matches:
-            rag_log.info("RAG 检索结束", detail="未检索到任何结果", result=f"total={time.time() - t_total:.2f}s")
+            rag_log.info(
+                "RAG 检索结束",
+                detail="未检索到任何结果",
+                result=f"total={time.time() - t_total:.2f}s",
+            )
             return []
 
         # 步骤3：提取文本对
@@ -416,8 +422,6 @@ class RAG_service:
         )
         return reranked[:effective_n]
 
-
-# load_dotenv()
 
 # # 实例化测试
 # service = RAG_service(

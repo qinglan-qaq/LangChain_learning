@@ -29,6 +29,9 @@ from lawApp_LangGraph.FastAPI.logging import (
     debug,
     system,
 )
+from dotenv import load_dotenv
+
+load_dotenv(dotenv_path="lawApp_LangGraph/.env")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
