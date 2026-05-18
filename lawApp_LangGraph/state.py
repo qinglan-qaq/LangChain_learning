@@ -105,10 +105,15 @@ class AgentState(BaseModel):
     #  思考链(Chain of Thought)
     reasoning: List[str] = Field(default_factory=list)
 
-    # RAG检索结果 | CRAG 结果 : 评估结果 网络检索结果
+    # RAG检索结果
     rag_documents: List[RetrievedDocument] = Field(default_factory=list)
+    
+    # 评估结果
     evaluation: EvaluationResult = Field(default_factory=EvaluationResult)
+    
+    # 网络检索结果
     web_search_results: List[str] = Field(default_factory=list)
+    
     # 拼装后的 CRAG 上下文
     crag_context: str = ""
 
