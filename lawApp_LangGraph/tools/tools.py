@@ -7,10 +7,13 @@ Agent 工具集 — 网络搜索与 PDF 生成
     markdown_to_pdf     — Markdown 转 PDF 文件
 """
 import os
+import time
 from datetime import datetime
 import markdown
 from langchain_community.utilities import SerpAPIWrapper
 from langchain_core.tools import tool
+
+from lawApp_LangGraph.FastAPI.logging import tool as tool_log
 
 
 # Tool 1: 谷歌搜索
@@ -32,6 +35,12 @@ def get_google_search(query: str) -> dict:
     dict,含 results 列表和格式化的 web_search_results:
     [{"title": "...", "link": "...", "snippet": "..."}, ...]
     """
+    t0 = time.time()
+    tool_log.info(
+        "→ 调用工具: get_google_search",
+        detail=f"query={query[:80]}",
+    )
+
     search = SerpAPIWrapper()
     raw = search.results(query)
 
@@ -51,8 +60,18 @@ def get_google_search(query: str) -> dict:
         )
 
     if not structured:
+        tool_log.info(
+            "← 工具返回: get_google_search",
+            detail="未找到搜索结果",
+            result=f"elapsed={time.time() - t0:.2f}s",
+        )
         return {"status": "empty", "message": "未找到相关搜索结果", "results": [], "web_search_results": []}
 
+    tool_log.info(
+        "← 工具返回: get_google_search",
+        detail=f"搜索结果{len(structured)}条",
+        result=f"elapsed={time.time() - t0:.2f}s",
+    )
     return {
         "status": "success",
         "count": len(structured),
@@ -79,6 +98,12 @@ def markdown_to_pdf(markdown_text: str, filename: str = None) -> dict:
     dict,含 pdf_path 和 is_pdf_output
     """
     import pdfkit
+
+    t0 = time.time()
+    tool_log.info(
+        "→ 调用工具: markdown_to_pdf",
+        detail=f"filename={filename or 'auto'} | content_len={len(markdown_text)}",
+    )
 
     if not filename:
         filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
@@ -119,4 +144,9 @@ def markdown_to_pdf(markdown_text: str, filename: str = None) -> dict:
 
     pdfkit.from_string(styled_html, file_path, options=options)
 
+    tool_log.info(
+        "← 工具返回: markdown_to_pdf",
+        detail=f"file={filename}",
+        result=f"elapsed={time.time() - t0:.2f}s",
+    )
     return {"pdf_path": file_path, "is_pdf_output": True}

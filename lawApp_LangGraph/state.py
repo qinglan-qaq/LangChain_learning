@@ -64,7 +64,7 @@ class ToolCallRecord(BaseModel):
 
     step_id: int
     tool_name: str
-    input: Dict[str, Any] = Field(default_factory=dict)
+    tool_input: Dict[str, Any] = Field(default_factory=dict)
     output: Any = None
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
@@ -95,6 +95,7 @@ class AgentState(BaseModel):
     current_step_index: int = 0
     replan_needed: bool = False
     replan_reason: Optional[str] = None
+    
     # 最终回答结果
     final_answer: str = ""
 
@@ -120,7 +121,7 @@ class AgentState(BaseModel):
     # 长期记忆写入确认
     memory_update: Optional[Dict[str, Any]] = None
 
-    # 原有 CRAG 管线兼容字段(LangGraph 路由用)
+    # CRAG 管线兼容字段(LangGraph 路由用)
     is_law_questions: bool = False
     is_simple_questions: bool = False
     final_prompts: str = ""

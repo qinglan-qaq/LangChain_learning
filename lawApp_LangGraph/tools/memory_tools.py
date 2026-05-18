@@ -8,10 +8,13 @@ Agent 可在关键节点调用这些工具,实现跨会话的知识积累。
 """
 
 import os
+import time
 from typing import Optional
 import psycopg2
 from langchain_core.tools import tool
 from sentence_transformers import SentenceTransformer
+
+from lawApp_LangGraph.FastAPI.logging import tool as tool_log, sys_log
 
 # ---- 懒加载单例 ----
 _embedder = None
@@ -22,6 +25,10 @@ _conn = None
 def _get_embedder() -> SentenceTransformer:
     global _embedder
     if _embedder is None:
+        sys_log.info(
+            "初始化 Memory Embedder (冷启动)",
+            detail=f"model={os.getenv('MEMORY_EMBED_MODEL', 'BAAI/bge-large-zh-v1.5')}",
+        )
         _embedder = SentenceTransformer(
             os.getenv("MEMORY_EMBED_MODEL", "BAAI/bge-large-zh-v1.5")
         )
@@ -81,10 +88,15 @@ def search_memory(query: str, top_k: int = 3) -> dict:
     返回:
     dict, 含 memories 列表,每项为 {memory_type, content, created_at, similarity}
     """
+    t0 = time.time()
+    tool_log.info(
+        "→ 调用工具: search_memory",
+        detail=f"query={query[:60]} | top_k={top_k}",
+    )
+
     ensure_memory_table()
 
     embedder = _get_embedder()
-    # 问题向量化
     query_vec = embedder.encode(query, normalize_embeddings=True).tolist()
 
     conn = _get_conn()
@@ -113,8 +125,14 @@ def search_memory(query: str, top_k: int = 3) -> dict:
         for r in rows
     ]
 
+    top_sim = memories[0]["similarity"] if memories else 0
+    tool_log.info(
+        "← 工具返回: search_memory",
+        detail=f"命中{len(memories)}条记忆",
+        result=f"top_similarity={top_sim:.3f} | elapsed={time.time() - t0:.2f}s",
+    )
     return {
-        "memory_results": memories, 
+        "memory_results": memories,
         "status": "success" if memories else "empty",
         "count": len(memories),
     }
@@ -158,23 +176,26 @@ def save_to_memory(
     返回:
     dict, 含 status / id / memory_type / is_truncated
     """
+    t0 = time.time()
+    tool_log.info(
+        "→ 调用工具: save_to_memory",
+        detail=f"type={memory_type} | thread={thread_id} | content_len={len(content)}",
+    )
+
     ensure_memory_table()
 
-    # 嵌入用文本: summary 优先, 否则用 content 截断
     embed_text = (summary or content).strip()
-    
+
     is_truncated = False
     if len(embed_text) > MAX_EMBED_LEN:
         embed_text = embed_text[:MAX_EMBED_LEN]
         is_truncated = True
 
-    # 生成嵌入向量
     embedder = _get_embedder()
     embedding = embedder.encode(embed_text, normalize_embeddings=True).tolist()
 
     import json
 
-    # 完整原文存 metadata, 搜索时才不会拉回大段文本
     meta = metadata or {}
     if summary:
         meta["full_content"] = content
@@ -198,6 +219,11 @@ def save_to_memory(
         msg += f", 嵌入文本已截断至 {MAX_EMBED_LEN} 字"
     msg += ")"
 
+    tool_log.info(
+        "← 工具返回: save_to_memory",
+        detail=f"id={new_id} | type={memory_type}" + (" | truncated" if is_truncated else ""),
+        result=f"elapsed={time.time() - t0:.2f}s",
+    )
     return {
         "memory_update": {
             "id": new_id,

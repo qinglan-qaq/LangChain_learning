@@ -11,12 +11,19 @@ Agent 可据此自主决策:检索 → 评估 → (如需)联网搜索 → 生�
 """
 
 import os
+import time
 from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+
+from lawApp_LangGraph.FastAPI.logging import (
+    tool as tool_log,
+    rag as rag_log,
+    system as sys_log,
+)
 
 
 load_dotenv()
@@ -33,13 +40,18 @@ def _get_rag_service():
     if _rag_service is None:
         from lawApp_LangGraph.RAG_service.RAG_program import RAG_service
 
+        sys_log.info(
+            "初始化 RAG_service (冷启动)",
+            detail="首次加载嵌入模型 + 重排序模型 + BM25 编码器",
+        )
         _rag_service = RAG_service(
             # TODO: 生产环境改为从安全配置中心获取,不要直接用环境变量 需要预先配置好
             index_name=os.getenv("PINECONE_INDEX_NAME", "pinecone-test-lawapp"),
-            api_key=os.getenv("PINECONE_API_KEY"), # type: ignore
+            api_key=os.getenv("PINECONE_API_KEY"),  # type: ignore
             cloud=os.getenv("PINECONE_CLOUD", "aws"),
             region=os.getenv("PINECONE_REGION", "us-east-1"),
         )
+        sys_log.info("RAG_service 初始化完成", result="嵌入 + 重排序 + BM25 模型已就绪")
     return _rag_service
 
 
@@ -85,6 +97,12 @@ def retrieve_legal_knowledge(
     结构化 dict,含 status / rag_documents 字段,
     每个文档为 RetrievedDocument 格式(case_number / case_cause / rerank_score / chunk_text 等)
     """
+    t0 = time.time()
+    tool_log.info(
+        "→ 调用工具: retrieve_legal_knowledge",
+        detail=f"query={query[:60]} | top_k={top_k} | alpha={alpha} | ns={namespace}",
+    )
+
     service = _get_rag_service()
     matches = service.search_withDenseSparse(
         query=query,
@@ -95,6 +113,11 @@ def retrieve_legal_knowledge(
     )
 
     if not matches:
+        tool_log.info(
+            "← 工具返回: retrieve_legal_knowledge",
+            detail="未检索到相关案例",
+            result=f"elapsed={time.time() - t0:.2f}s",
+        )
         return {"status": "empty", "message": "未检索到相关案例", "rag_documents": []}
 
     results = []
@@ -114,6 +137,13 @@ def retrieve_legal_knowledge(
                 "chunk_text": meta.get("chunk_text", "")[:500],
             }
         )
+
+    top_score = results[0]["rerank_score"] if results else 0
+    tool_log.info(
+        "← 工具返回: retrieve_legal_knowledge",
+        detail=f"返回{len(results)}条案例 | top_score={top_score:.3f}",
+        result=f"elapsed={time.time() - t0:.2f}s",
+    )
     return {"status": "success", "count": len(results), "rag_documents": results}
 
 
@@ -144,7 +174,18 @@ def evaluate_case_relevance(
     结构化 dict,含 evaluation 键,其值为 correct/ambiguous/incorrect 分类及 quality_verdict
     """
 
+    t0 = time.time()
+    tool_log.info(
+        "→ 调用工具: evaluate_case_relevance",
+        detail=f"input_docs={len(documents)}",
+    )
+
     if not documents:
+        tool_log.info(
+            "← 工具返回: evaluate_case_relevance",
+            detail="输入为空",
+            result="verdict=不足",
+        )
         return {
             "evaluation": {
                 "error": "输入为空,没有可评估的文档",
@@ -171,13 +212,17 @@ def evaluate_case_relevance(
             incorrect.append(doc)
 
     total_usable = len(correct) + len(ambiguous)
-    # 判断检索数量是否充足
     quality_verdict = (
         "充足"
         if len(correct) >= MIN_QUALITY_DOCS or total_usable >= MIN_QUALITY_DOCS
         else "不足,建议进行网络搜索补充"
     )
 
+    tool_log.info(
+        "← 工具返回: evaluate_case_relevance",
+        detail=f"correct={len(correct)} | ambiguous={len(ambiguous)} | incorrect={len(incorrect)}",
+        result=f"verdict={quality_verdict} | elapsed={time.time() - t0:.2f}s",
+    )
     return {
         "evaluation": {
             "total": len(documents),
@@ -234,6 +279,15 @@ def analyze_legal_issue(
     返回:
     结构化 dict,含 final_answer / crag_context / sources
     """
+    t0 = time.time()
+    correct_n = len(correct_cases or [])
+    ambig_n = len(ambiguous_cases or [])
+    web_n = len(web_results or [])
+    tool_log.info(
+        "→ 调用工具: analyze_legal_issue",
+        detail=f"query={query[:60]} | correct={correct_n} | ambiguous={ambig_n} | web={web_n}",
+    )
+
     llm = _get_llm()
 
     correct_cases = correct_cases or []
@@ -242,7 +296,6 @@ def analyze_legal_issue(
 
     parts = []
     sources = []
-    # 优先使用高质量案例,其次是中等相关案例,最后是网络资料 解析返回结果组装上下文内容
     for doc in correct_cases:
         cn = doc.get("case_number", "")
         yr = doc.get("year", "")
@@ -269,11 +322,17 @@ def analyze_legal_issue(
 
     context = "\n\n---\n\n".join(parts) if parts else "暂无相关资料"
 
+    rag_log.debug("开始 LLM 法律分析生成", detail=f"context_len={len(context)}")
     chain = LEGAL_ANALYSIS_PROMPT | llm | StrOutputParser()
 
-    # 结合上下文内容和用户问题进行法律分析生成
     answer = chain.invoke({"context": context, "query": query})
 
+    elapsed = time.time() - t0
+    tool_log.info(
+        "← 工具返回: analyze_legal_issue",
+        detail=f"context_len={len(context)} | sources={len(sources)}",
+        result=f"answer_len={len(answer)} | elapsed={elapsed:.2f}s",
+    )
     return {
         "final_answer": answer,
         "crag_context": context,

@@ -14,6 +14,8 @@ from pinecone_text.hybrid import hybrid_convex_scale
 from pinecone_text.sparse import BM25Encoder
 from sentence_transformers import CrossEncoder
 
+from lawApp_LangGraph.FastAPI.logging import rag as rag_log, sys_log
+
 
 class RAG_service:
     def __init__(
@@ -67,7 +69,9 @@ class RAG_service:
         self.reranker = CrossEncoder("BAAI/bge-reranker-large", max_length=512)
 
         # 稀疏向量
-        self.bm25 = BM25Encoder().load("bm25_law_params.json")
+        self.bm25 = BM25Encoder().load(
+            "E:\\LangChain\\lawApp_LangGraph\\RAG_service\\bm25_law_params.json"
+        )
 
         # 密集向量
         model_name = "BAAI/bge-large-zh-v1.5"
@@ -317,6 +321,8 @@ class RAG_service:
         :param alpha:
         :return:
         """
+        t_total = time.time()
+
         # 步骤0：入参校验
         if self.index is None:
             raise RuntimeError("索引未初始化, 请先调用 create_index()")
@@ -324,15 +330,28 @@ class RAG_service:
         effective_n = max(1, int(rerank_top_n))
         effective_top_k = max(effective_n, int(top_k))
 
+        rag_log.debug(
+            "RAG 检索开始",
+            detail=f"query={query[:60]} | top_k={effective_top_k} | alpha={alpha} | ns={namespace}",
+        )
+
         # 步骤1：获取查询的密集和稀疏向量
+        t_embed = time.time()
         dense_vec = self.embeddings.embed_query(query)
         sparse_vec = self.bm25.encode_queries(query)
+        rag_log.debug(
+            "密集+稀疏向量编码完成",
+            detail=f"dense_dim={len(dense_vec)}",
+            result=f"elapsed={time.time() - t_embed:.2f}s",
+        )
 
         # 使用官方混合凸组合函数
         weighted_dense, weighted_sparse = hybrid_convex_scale(
             dense_vec, sparse_vec, alpha
         )
+
         # 步骤2：混合召回
+        t_query = time.time()
         results = self.index.query(
             vector=weighted_dense,
             sparse_vector=weighted_sparse,
@@ -341,9 +360,14 @@ class RAG_service:
             include_metadata=True,
         )
         matches = results.matches
+        rag_log.debug(
+            "Pinecone 混合召回完成",
+            detail=f"matches={len(matches)}",
+            result=f"elapsed={time.time() - t_query:.2f}s",
+        )
 
         if not matches:
-            print("未检索到任何结果")
+            rag_log.info("RAG 检索结束", detail="未检索到任何结果", result=f"total={time.time() - t_total:.2f}s")
             return []
 
         # 步骤3：提取文本对
@@ -351,27 +375,45 @@ class RAG_service:
         pairs = [[query, t] for t in texts]
 
         # 步骤4：重排序
+        t_rerank = time.time()
         try:
             scores = self.reranker.predict(pairs)
             scores = list(scores) if not isinstance(scores, list) else scores
             scores = [float(s) for s in scores]
         except Exception as e:
-            print(f"重排序失败,降级为原始混合排序: {e}")
-            return matches[:effective_n]
-
-        if len(scores) != len(matches):
-            print(
-                f"重排序结果({len(scores)})与召回({len(matches)})不匹配,降级为原始排序"
+            rag_log.warning(
+                "重排序失败,降级为原始混合排序",
+                detail=str(e),
+                result=f"返回前{effective_n}条",
             )
             return matches[:effective_n]
 
-        # 组合得分与匹配对象成元组，按得分排序，再取出匹配对象 v9的特性
+        rag_log.debug(
+            "CrossEncoder 重排序完成",
+            detail=f"pairs={len(pairs)} | scores_range=[{min(scores):.3f}, {max(scores):.3f}]",
+            result=f"elapsed={time.time() - t_rerank:.2f}s",
+        )
+
+        if len(scores) != len(matches):
+            rag_log.warning(
+                "重排序结果数量不匹配,降级为原始排序",
+                detail=f"scores={len(scores)} vs matches={len(matches)}",
+            )
+            return matches[:effective_n]
+
+        # 组合得分与匹配对象成元组，按得分排序，再取出匹配对象
         reranked = [
             match
             for match, _ in sorted(
                 zip(matches, scores), key=lambda pair: pair[1], reverse=True
             )
         ]
+        top_score = max(scores) if scores else 0
+        rag_log.info(
+            "RAG 检索完成",
+            detail=f"召回{len(matches)}条 → 重排序 → 返回{min(effective_n, len(reranked))}条",
+            result=f"top_score={top_score:.3f} | total={time.time() - t_total:.2f}s",
+        )
         return reranked[:effective_n]
 
 

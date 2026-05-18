@@ -19,6 +19,7 @@ Graph 流程:
 
 import json
 import os
+import time
 from typing import Any, Dict
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, SystemMessage
@@ -29,6 +30,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from lawApp_LangGraph.state import AgentState, PlanStep, ToolCallRecord
 from lawApp_LangGraph.tools import ALL_TOOLS
+from lawApp_LangGraph.FastAPI.logging import debug, flow, tool as tool_log
 
 load_dotenv()
 
@@ -62,7 +64,7 @@ llm_executor_with_tools = llm_executor.bind_tools(ALL_TOOLS)
 TOOL_BY_NAME: Dict[str, Any] = {t.name: t for t in ALL_TOOLS}
 
 
-#  工具 → AgentState 字段合并 
+#  工具 → AgentState 字段合并
 # 工具返回 dict 中与 AgentState 同名的 key 将被自动合并
 # web_search_results 特殊处理:追加而非覆盖
 _STATE_KEYS = {
@@ -77,7 +79,7 @@ _STATE_KEYS = {
     "memory_update",
 }
 
-#  Flash LLM 降级:直接参数映射 
+#  Flash LLM 降级:直接参数映射
 _TOOL_FALLBACK_ARGS = {
     "retrieve_legal_knowledge": lambda s: {
         "query": s.query,
@@ -140,10 +142,14 @@ PLANNER_SYSTEM = """
 
 def planner_node(state: AgentState) -> dict:
     """Pro LLM: 分析问题 → JSON 计划 + 思考链"""
+    t0 = time.time()
     query = state.query.strip()
+    debug.debug("→ 进入 Planner 节点", detail=f"query={query[:80]}")
+
     if not query:
+        debug.info("← Planner 退出", detail="空输入", result="返回默认提示")
         return {"plan": [], "reasoning": ["无输入"], "final_answer": "请提供问题."}
-    # 工具描述列表
+
     tools_desc = "\n".join(f"- {t.name}: {t.description[:120]}" for t in ALL_TOOLS)
 
     chain = (
@@ -162,6 +168,7 @@ def planner_node(state: AgentState) -> dict:
         result = json.loads(raw)
 
     except json.JSONDecodeError:
+        debug.warning("Planner JSON 解析失败", detail="使用默认法律检索计划")
         return {
             "reasoning": ["Planner 输出解析失败,使用默认法律检索计划"],
             "plan": [
@@ -199,6 +206,13 @@ def planner_node(state: AgentState) -> dict:
             )
         )
 
+    elapsed = time.time() - t0
+    step_names = [f"{s.step_id}.{s.tool_name or '闲聊'}" for s in plan]
+    debug.info(
+        "← Planner 完成",
+        detail=f"reasoning={len(reasoning)}条, plan={len(plan)}步",
+        result=f"elapsed={elapsed:.2f}s | 步骤: {' → '.join(step_names) if step_names else '无(直接回答)'}",
+    )
     return {
         "plan": plan,
         "reasoning": reasoning,
@@ -231,24 +245,37 @@ EXECUTOR_PROMPT = """\
 
 def executor_node(state: AgentState) -> dict:
     """Flash LLM: 调用指定工具,更新状态;失败则自动降级为直接参数映射"""
+    t0 = time.time()
     idx = state.current_step_index
     plan = state.plan
 
     if idx >= len(plan):
+        debug.debug("→ Executor 跳过", detail=f"步骤索引{idx}超出计划长度{len(plan)}")
         return {}
 
     step = plan[idx]
+    total_steps = len(plan)
     step.status = "doing"
+
+    debug.debug(
+        f"→ 进入 Executor 节点 [{idx + 1}/{total_steps}]",
+        detail=f"tool_name={step.tool_name or '无'} | desc={step.description[:60]}",
+    )
 
     # 无工具步骤 → 跳过
     if not step.tool_name:
         step.status = "done"
+        debug.info(
+            f"← Executor 完成 [{idx + 1}/{total_steps}]",
+            detail="无工具步骤,跳过",
+            result=f"elapsed={time.time() - t0:.2f}s",
+        )
         return {"plan": plan, "current_step_index": idx + 1}
 
     tool_output = None
     error_msg = None
 
-    #  路径 A: Flash LLM 辅助调用 
+    #  路径 A: Flash LLM 辅助调用
     try:
         rag_summary = "暂无"
         if state.rag_documents:
@@ -280,23 +307,33 @@ def executor_node(state: AgentState) -> dict:
             web_summary=web_summary,
         )
 
+        debug.debug("Executor 调用 Flash LLM", detail=f"tool={step.tool_name}")
         response = llm_executor_with_tools.invoke([SystemMessage(content=prompt)])
 
         if isinstance(response, AIMessage) and response.tool_calls:
             for tc in response.tool_calls:
                 called = TOOL_BY_NAME.get(tc["name"])
                 if called:
+                    debug.debug(
+                        "LLM 发起工具调用",
+                        detail=f"tool={tc['name']} | args={str(tc.get('args', {}))[:200]}",
+                    )
                     tool_output = called.invoke(tc["args"])
                     break
         else:
             raise RuntimeError("Flash LLM 未发起工具调用")
     except Exception as e:
-        #  路径 B: 降级直接参数映射 
+        #  路径 B: 降级直接参数映射
+        debug.warning(
+            "Flash LLM 调用失败,降级为参数映射",
+            detail=f"tool={step.tool_name} | error={str(e)[:100]}",
+        )
         try:
             args_fn = _TOOL_FALLBACK_ARGS.get(
                 step.tool_name, lambda s: {"query": s.query}
             )
             tool_output = TOOL_BY_NAME[step.tool_name].invoke(args_fn(state))
+            debug.info("降级参数映射成功", detail=f"tool={step.tool_name}")
         except Exception as e2:
             error_msg = f"{e} | 降级: {e2}"
 
@@ -316,11 +353,23 @@ def executor_node(state: AgentState) -> dict:
         "tool_calls": state.tool_calls,
     }
 
+    tool_result_summary = ""
     if isinstance(tool_output, dict):
         for k, v in tool_output.items():
             if k in _STATE_KEYS:
                 if k == "web_search_results":
                     state_updates[k] = list(state.web_search_results) + v
+                    tool_result_summary = f"web_results={len(v)}条"
+                elif k == "rag_documents":
+                    state_updates[k] = v
+                    tool_result_summary = f"rag_docs={len(v)}条"
+                elif k == "final_answer":
+                    state_updates[k] = v
+                    tool_result_summary = f"answer_len={len(v)}"
+                elif k == "evaluation":
+                    state_updates[k] = v
+                    verdict = v.get("quality_verdict", "") if isinstance(v, dict) else getattr(v, "quality_verdict", "")
+                    tool_result_summary = f"verdict={verdict}"
                 else:
                     state_updates[k] = v
 
@@ -329,6 +378,13 @@ def executor_node(state: AgentState) -> dict:
     if error_msg:
         state_updates["error"] = error_msg
 
+    elapsed = time.time() - t0
+    status = "失败" if error_msg else "完成"
+    debug.info(
+        f"← Executor {status} [{idx + 1}/{total_steps}]",
+        detail=f"tool={step.tool_name}",
+        result=f"{tool_result_summary} | elapsed={elapsed:.2f}s" if tool_result_summary else f"elapsed={elapsed:.2f}s",
+    )
     return state_updates
 
 
@@ -342,6 +398,7 @@ def replan_check_node(state: AgentState) -> dict:
     - 评估结果为"不足"但无联网搜索步骤
     - 执行出错
     """
+    debug.debug("→ 进入 Replan Check 节点", detail="检查执行质量...")
     needs = False
     reasons = []
 
@@ -362,6 +419,18 @@ def replan_check_node(state: AgentState) -> dict:
         needs = True
         reasons.append(f"执行异常: {state.error}")
 
+    if needs:
+        debug.info(
+            "← Replan Check: 需要重规划",
+            detail="; ".join(reasons),
+            result="→ 路由到 Replanner",
+        )
+    else:
+        debug.info(
+            "← Replan Check: 质量通过",
+            detail=f"已执行{len(state.tool_calls)}个工具",
+            result="→ 路由到 Finalize",
+        )
     return {
         "replan_needed": needs,
         "replan_reason": "; ".join(reasons) if reasons else None,
@@ -371,7 +440,7 @@ def replan_check_node(state: AgentState) -> dict:
 # Node 4: The Replanner — Pro LLM 重新规划
 
 
-REPLANNER_SYSTEM = """\
+REPLANNER_SYSTEM = """
 你是任务规划师.基于已执行的步骤和当前结果,生成**补充步骤**.
 
 ## 已执行步骤
@@ -405,6 +474,13 @@ REPLANNER_SYSTEM = """\
 
 def replanner_node(state: AgentState) -> dict:
     """Pro LLM: 检查当前结果 → 生成补充计划 → 返回 Executor"""
+    t0 = time.time()
+    reason = state.replan_reason or "质量不足"
+    debug.debug(
+        "→ 进入 Replanner 节点",
+        detail=f"原因: {reason} | 已完成{len(state.plan)}步",
+    )
+
     executed = "\n".join(
         f"[{'done' if s.status == 'done' else 'failed'}] "
         f"步骤{s.step_id}: {s.description} → {s.tool_name}"
@@ -413,20 +489,31 @@ def replanner_node(state: AgentState) -> dict:
 
     tools_desc = "\n".join(f"- {t.name}: {t.description[:120]}" for t in ALL_TOOLS)
 
+    # 生成补充步骤
     prompt = REPLANNER_SYSTEM.format(
+
         executed_steps=executed,
+
         doc_count=len(state.rag_documents),
+
         quality=state.evaluation.quality_verdict if state.evaluation else "未评估",
+
         web_count=len(state.web_search_results),
+
         error=state.error or "无",
+
         replan_reason=state.replan_reason or "质量不足",
+
         available_tools=tools_desc,
+
         user_query=state.query,
+
         next_id=len(state.plan) + 1,
+
     )
 
-    chain = PromptTemplate.from_template(prompt) | llm_planner | StrOutputParser()
-    raw = chain.invoke({})
+    chain = llm_planner | StrOutputParser()
+    raw = chain.invoke(prompt)
 
     try:
         raw = raw.strip()
@@ -436,6 +523,7 @@ def replanner_node(state: AgentState) -> dict:
                 raw = raw[:-3]
         result = json.loads(raw)
     except json.JSONDecodeError:
+        debug.warning("Replanner JSON 解析失败", detail="使用默认补充步骤")
         default = [
             PlanStep(
                 step_id=len(state.plan) + 1,
@@ -473,6 +561,13 @@ def replanner_node(state: AgentState) -> dict:
             )
         )
 
+    elapsed = time.time() - t0
+    new_step_names = [f"{s.step_id}.{s.tool_name}" for s in new_steps]
+    debug.info(
+        "← Replanner 完成",
+        detail=f"新增{len(new_steps)}步: {' , '.join(new_step_names)}",
+        result=f"elapsed={elapsed:.2f}s | → 路由回 Executor",
+    )
     return {
         "plan": state.plan + new_steps,
         "reasoning": state.reasoning
@@ -489,18 +584,33 @@ def replanner_node(state: AgentState) -> dict:
 
 def finalize_node(state: AgentState) -> dict:
     """如果已有 final_answer 则直接使用；否则用已检索案例生成简要回答"""
+    t0 = time.time()
+    debug.debug("→ 进入 Finalize 节点", detail="组装最终回答...")
+
     if state.final_answer:
+        debug.info(
+            "← Finalize 完成 (已有答案)",
+            detail=f"answer_len={len(state.final_answer)}",
+            result=f"elapsed={time.time() - t0:.2f}s",
+        )
         return {}
 
     if state.rag_documents:
+        debug.debug("Finalize 兜底生成", detail=f"使用{len(state.rag_documents[:3])}条案例")
         docs = "\n".join(f"- {d.chunk_text[:300]}" for d in state.rag_documents[:3])
         prompt = PromptTemplate.from_template(
             "基于以下案例,简要回答用户问题.\n案例:\n{docs}\n\n问题: {query}\n\n法律建议:"
         )
         chain = prompt | llm_executor | StrOutputParser()
         answer = chain.invoke({"docs": docs, "query": state.query})
+        debug.info(
+            "← Finalize 完成 (兜底)",
+            detail=f"answer_len={len(answer)}",
+            result=f"elapsed={time.time() - t0:.2f}s",
+        )
         return {"final_answer": answer}
 
+    debug.info("← Finalize 完成", detail="无可用数据", result="返回默认欢迎语")
     return {"final_answer": "您好！请问有什么法律问题需要咨询？"}
 
 
@@ -509,17 +619,29 @@ def finalize_node(state: AgentState) -> dict:
 
 def route_after_planner(state: AgentState) -> str:
     """有步骤 → executor | 无步骤 → finalize"""
-    return "executor" if state.plan else "finalize"
+    target = "executor" if state.plan else "finalize"
+    debug.debug(f"路由: Planner → {target}", detail=f"plan_steps={len(state.plan)}")
+    return target
 
 
 def route_after_executor(state: AgentState) -> str:
     """还有步骤 → 继续 executor | 全部完成 → replan_check"""
-    return "executor" if state.current_step_index < len(state.plan) else "replan_check"
+    target = "executor" if state.current_step_index < len(state.plan) else "replan_check"
+    debug.debug(
+        f"路由: Executor → {target}",
+        detail=f"step={state.current_step_index}/{len(state.plan)}",
+    )
+    return target
 
 
 def route_after_replan_check(state: AgentState) -> str:
     """需重规划 → replanner | 质量通过 → finalize"""
-    return "replanner" if state.replan_needed else "finalize"
+    target = "replanner" if state.replan_needed else "finalize"
+    debug.debug(
+        f"路由: ReplanCheck → {target}",
+        detail=f"replan_needed={state.replan_needed}",
+    )
+    return target
 
 
 # 构建 Graph

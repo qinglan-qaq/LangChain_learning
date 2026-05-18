@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
-# ── 请求 ──────────────────────────────────────────
+#  请求
 
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=5000, description="用户问题")
@@ -14,16 +14,18 @@ class QueryRequest(BaseModel):
     )
 
 
-# ── 响应 ──────────────────────────────────────────
+#  响应
 
 class ToolInfo(BaseModel):
     """工具元信息"""
+
     name: str
     description: str
 
 
 class SourceInfo(BaseModel):
     """回答引用的来源"""
+
     case_number: str = ""
     year: str = ""
     snippet: str = ""
@@ -36,6 +38,3 @@ class QueryResponse(BaseModel):
     sources: List[SourceInfo] = Field(default_factory=list)
     tool_calls: List[str] = Field(default_factory=list)
     reasoning: List[str] = Field(default_factory=list)
-
-
-
