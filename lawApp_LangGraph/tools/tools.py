@@ -14,12 +14,14 @@ from langchain_community.utilities import SerpAPIWrapper
 from langchain_core.tools import tool
 
 from lawApp_LangGraph.FastAPI.logging import tool as tool_log
+from langsmith import traceable
 
 
 # Tool 1: 谷歌搜索
 
 
 @tool
+@traceable(run_type="tool", name="工具_Google搜索")
 def get_google_search(query: str) -> dict:
     """使用谷歌搜索API在线搜索法律相关信息.返回结构化结果,每项包含标题、链接、摘要.
 
@@ -87,6 +89,7 @@ def markdown_to_html(markdown_text: str) -> str:
 
 
 @tool
+@traceable(run_type="tool", name="工具_Markdown转PDF")
 def markdown_to_pdf(markdown_text: str, filename: str = None) -> dict:
     """MarkDown文件转为pdf,当用户指定pdf文件输出时使用.
 

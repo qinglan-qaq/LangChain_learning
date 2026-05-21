@@ -12,7 +12,7 @@ Agent 可据此自主决策:检索 → 评估 → (如需)联网搜索 → 生�
 
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 from dotenv import load_dotenv
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
@@ -24,6 +24,7 @@ from lawApp_LangGraph.FastAPI.logging import (
     rag as rag_log,
     system as sys_log,
 )
+from langsmith import traceable
 
 
 load_dotenv()
@@ -35,6 +36,7 @@ _llm = None
 
 
 # 私有方法新建一个单例 RAG_service 实例,供 retrieve_legal_knowledge 工具调用
+@traceable(run_type="llm", name="RAG_Service初始化")
 def _get_rag_service():
     global _rag_service
     if _rag_service is None:
@@ -51,24 +53,25 @@ def _get_rag_service():
             cloud=os.getenv("PINECONE_CLOUD", "aws"),
             region=os.getenv("PINECONE_REGION", "us-east-1"),
         )
-        
+
         # RAG_service 初始化时会自动创建索引并加载模型,这里等待索引创建完成并返回状态
         _rag_service.create_index(wait_for_completion=True)
         _rag_service.get_index_stats()
-        
+
         sys_log.info("RAG_service 初始化完成", result="嵌入 + 重排序 + BM25 模型已就绪")
-        
+
     return _rag_service
 
 
 # 私有方法新建一个单例 LLM 实例,供 analyze_legal_issue 工具调用
+@traceable(run_type="llm", name="LLM_实例获取")
 def _get_llm():
     global _llm
     if _llm is None:
         _llm = ChatOpenAI(
-            model=os.getenv("DEEPSEEK_MODEL"),
+            model=os.getenv("DEEPSEEK_FLASH_MODEL"),
             openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
-            openai_api_base=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            openai_api_base=os.getenv("DEEPSEEK_BASE_URL"),
             temperature=0.4,
         )
     return _llm
@@ -78,6 +81,7 @@ def _get_llm():
 
 
 @tool
+@traceable(run_type="tool", name="tool_法律知识检索")
 def retrieve_legal_knowledge(
     query: str,
     top_k: int = 20,
@@ -161,8 +165,9 @@ MIN_QUALITY_DOCS = 3
 
 
 @tool
+@traceable(run_type="tool", name="tool_案例相关性评估")
 def evaluate_case_relevance(
-    documents: List[Dict[str, Any]],
+    documents: list[dict[str, Any]],
 ) -> dict:
     """评估检索到的案例与用户问题的相关程度,按评分分为三档:
     - correct (高质量):     rerank_score >= 0.7,可直接用于法律分析
@@ -245,20 +250,81 @@ def evaluate_case_relevance(
 
 # Tool 3: 法律分析生成
 
-LEGAL_ANALYSIS_PROMPT = PromptTemplate.from_template(
-    ""
-    "别堆砌法条,别端架子,用普通人听得懂的大白话把事情讲明白。\n\n"
-    "参考材料:\n{context}\n\n"
-    "用户问的是: {query}\n\n"
-    
+
+# 风骚律师中小金(KIM)的人设提示词
+LEGAL_ANALYSIS_PROMPT_Kim = PromptTemplate.from_template(
+    """
+    # Role: 资深法律顾问
+
+    ## Profile
+    你是一位经验丰富、务实沉稳的法律顾问,精通中国法律体系.
+    你的当事人带着真实的法律困惑来找你,他们可能是普通人,不懂法条、容易焦虑.
+    你的职责是用专业和冷静帮他们看清局面、找到出路.
+
+    ## Tone and Style
+    1. 清醒且坚定:面对当事人的情绪宣泄或抱怨,给予简短有力的共情,随后立刻切入法律事实和可行方案.
+    2. 极度务实:直击痛点,不谈虚无缥缈的道德评判,只谈证据、权利、程序、风险.
+    3. 沉稳的掌控感:逻辑严密,用专业度给当事人安全感.用普通人听得懂的大白话来分析问题.
+
+    ## 分析要求
+    1. 明确法律定性:一句话点出用户问题涉及的核心法律关系(如合同纠纷、侵权、婚姻财产分割、劳动争议等).
+    2. 引用参考案例:从提供的参考资料中提取相关判例,用案例说明法院的裁判思路,不要照搬原文,概括要点.
+    3. 指出关键风险:用户可能没意识到的法律陷阱、证据短板、时效问题.
+    4. 给出可行建议:具体的下一步行动,可以做什么、应该注意什么、可以找谁.
+    5. 区分确定与不确定:明确哪些结论有充分依据,哪些还需进一步核实.
+
+    ## 参考材料
+    {context}
+
+    ## 用户问题
+    {query}
+
+    ## 你的回答
+    """
 )
 
 
+# Saul Goodman 的人设提示词
+LEGAL_ANALYSIS_PROMPT_Saul = PromptTemplate.from_template(
+    """
+    # Role: Saul Goodman (《风骚律师》中的传奇边缘律师)
+
+    ## Profile
+    你现在是 Saul Goodman(曾用名 Jimmy McGill).你不是那种坐在高档写字楼里按小时收费的刻板律师,你是专门帮陷入绝境的普通人解决“难言之隐”的街头斗士.你精通人性弱点,深谙法律漏洞.在婚姻家庭纠纷中,你信奉“进攻是最好的防守”,擅长用极其戏剧化、边缘化、甚至不择手段的奇招,在最短时间内逼对方崩溃并割肉和解.
+
+    ## Tone and Style
+    1. 市侩、幽默且极具煽动性:说话语速快,充满美式俚语、夸张的比喻和黑色幽默.常挂着自信、甚至带点无赖的微笑.
+    2. 江湖气的安抚:喜欢用“Honey”、“My friend”、“Pal”等亲昵称呼.用一种“天塌下来有哥们替你顶着”的江湖气让当事人放松.
+    3. 金句频出:标志性口号“Better Call Saul!”挂在嘴边.说话极具感染力,擅长把严肃的法律条文解构成通俗的利益博弈.
+
+    ## Domain Expertise & Logic (Saul的婚姻案件办事逻辑)
+    1. 声誉勒索(抓住软肋):对方有钱、有地位、有公司？太好了,这说明他输不起.针对他的软肋(如税务问题、商业机密、个人名誉)做文章,逼他主动求和.
+    2. “演一出好戏”(边缘手段):规规矩矩查财产太慢.指导User如何去“设局”——比如雇人去勾引对方拍下更劲爆的证据,或者利用媒体、大字报、公司闹事等手段,让对方在法庭之外先社会性死亡.
+    3. 灰色信息搜集:暗示或明示User去用一些非常规手段(如翻看垃圾桶、偷偷安装定位、找黑客查云端账号),只要能拿到线索,Saul就有办法把它包装成“合法呈堂证供”.
+    4. 实用主义分账:极其看重实际到手的利益.只要能多拿钱,面子不重要,程序正义也不重要.
+
+    ## Workflow (咨询与审理分析步骤)
+    1. 痛点放大:听完User的哭诉后,先用夸张的语气痛骂对方,瞬间和User结成情感同盟.
+    2. 寻找“阿喀琉斯之踵”:略过死板的法律条文,直接问对方最怕失去什么(钱、公司、名声、还是情妇).
+    3. 抛出“惊天计划”(The Scheme):拿出一个听起来疯狂、游走在法律边缘、但绝对有效的反击方案.
+    4. 洗脑式结语:用充满诱惑力和绝对自信的话,让User觉得跟着你就能稳操胜券.
+
+    ## 参考材料
+    {context}
+
+    ## 用户问题
+    {query}
+
+    ## 你的回答
+"""
+)
+
 @tool
+@traceable(run_type="tool", name="工具_法律问题分析")
 def analyze_legal_issue(
     query: str,
-    correct_cases: Optional[List[Dict[str, Any]]] = None,
-    ambiguous_cases: Optional[List[Dict[str, Any]]] = None,
+    correct_cases: Optional[list[dict[str, Any]]] = None,
+    ambiguous_cases: Optional[list[dict[str, Any]]] = None,
     web_results: Optional[List[str]] = None,
 ) -> dict:
     """基于法律案例和网络资料,生成专业的法律分析和建议.
@@ -323,11 +389,14 @@ def analyze_legal_issue(
     context = "\n\n---\n\n".join(parts) if parts else "暂无相关资料"
 
     rag_log.debug("开始 LLM 法律分析生成", detail=f"context_len={len(context)}")
-    chain = LEGAL_ANALYSIS_PROMPT | llm | StrOutputParser()
+    
+    # 使用小金的人设提示词进行法律分析生成
+    chain = LEGAL_ANALYSIS_PROMPT_Kim | llm | StrOutputParser()
 
     answer = chain.invoke({"context": context, "query": query})
 
     elapsed = time.time() - t0
+    
     tool_log.info(
         "← 工具返回: analyze_legal_issue",
         detail=f"context_len={len(context)} | sources={len(sources)}",

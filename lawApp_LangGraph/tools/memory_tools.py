@@ -15,6 +15,7 @@ from langchain_core.tools import tool
 from sentence_transformers import SentenceTransformer
 
 from lawApp_LangGraph.FastAPI.logging import tool as tool_log, system as sys_log
+from langsmith import traceable
 
 # ---- 懒加载单例 ----
 _embedder = None
@@ -22,6 +23,7 @@ _conn = None
 
 
 # 私有方法新建一个单例 SentenceTransformer 实例 嵌入模型
+@traceable(run_type="llm", name="Embedder_嵌入模型初始化")
 def _get_embedder() -> SentenceTransformer:
     global _embedder
     if _embedder is None:
@@ -36,6 +38,7 @@ def _get_embedder() -> SentenceTransformer:
 
 
 # 私有方法新建一个单例 PostgreSQL 连接实例
+@traceable(run_type="chain", name="DB_数据库连接")
 def _get_conn():
     global _conn
     if _conn is None:
@@ -50,6 +53,7 @@ def _get_conn():
 
 
 # ---- 建表 (幂等) ----
+@traceable(run_type="chain", name="DB_记忆表初始化")
 def ensure_memory_table():
     """在 law_app 数据库中创建 agent_memory 表 (如不存在)"""
     conn = _get_conn()
@@ -73,6 +77,7 @@ def ensure_memory_table():
 # Tool A: 搜索记忆
 
 @tool
+@traceable(run_type="tool", name="工具_记忆搜索")
 def search_memory(query: str, top_k: int = 3) -> dict:
     """搜索长期记忆库,召回与当前问题相关的历史信息。
 
@@ -147,6 +152,7 @@ MAX_EMBED_LEN = 512  # 嵌入文本上限, 超出自动截断
 
 
 @tool
+@traceable(run_type="tool", name="工具_记忆保存")
 def save_to_memory(
     content: str,
     memory_type: str = "general",

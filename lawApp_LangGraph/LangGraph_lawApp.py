@@ -31,6 +31,7 @@ from langgraph.graph import END, START, StateGraph
 from lawApp_LangGraph.state import AgentState, PlanStep, ToolCallRecord
 from lawApp_LangGraph.tools import ALL_TOOLS
 from lawApp_LangGraph.FastAPI.logging import debug, flow, tool as tool_log
+from langsmith import traceable
 
 load_dotenv()
 
@@ -143,6 +144,7 @@ PLANNER_SYSTEM = """
 """
 
 
+@traceable(run_type="chain", name="Planner_计划节点")
 def planner_node(state: AgentState) -> dict:
     """Pro LLM: 分析问题 → JSON 计划 + 思考链"""
     t0 = time.time()
@@ -246,6 +248,7 @@ EXECUTOR_PROMPT = """
 """
 
 
+@traceable(run_type="chain", name="Executor_执行节点")
 def executor_node(state: AgentState) -> dict:
     """Flash LLM: 调用指定工具,更新状态;失败则自动降级为直接参数映射"""
     t0 = time.time()
@@ -433,6 +436,7 @@ REPLAN_CHECK_PROMPT = """
 """
 
 
+@traceable(run_type="chain", name="ReplanCheck_重规划检查节点")
 def replan_check_node(state: AgentState) -> dict:
     """Flash LLM: 分析已执行步骤的结果,语义级判断是否需要重规划"""
     t0 = time.time()
@@ -554,6 +558,7 @@ REPLANNER_SYSTEM = """
 """
 
 
+@traceable(run_type="chain", name="Replanner_重规划节点")
 def replanner_node(state: AgentState) -> dict:
     """Pro LLM: 检查当前结果 → 生成补充计划 → 返回 Executor"""
     t0 = time.time()
@@ -664,6 +669,7 @@ def replanner_node(state: AgentState) -> dict:
 # Node 5: Finalize — 组装最终回答
 
 
+@traceable(run_type="chain", name="Finalize_最终组装节点")
 def finalize_node(state: AgentState) -> dict:
     """如果已有 final_answer 则直接使用；否则用已检索案例生成简要回答"""
     t0 = time.time()

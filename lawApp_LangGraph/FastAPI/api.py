@@ -82,6 +82,7 @@ async def ask(request: QueryRequest):
     sid = ensure_session(request.session_id)
     set_session(sid)
     query_preview = request.query[:80].replace("\n", " ")
+    
     flow.info("流程开始", summary="用户提问", detail=f"query={query_preview}")
 
     t0 = time.time()
