@@ -106,6 +106,7 @@ _TOOL_FALLBACK_ARGS = {
             d.model_dump() for d in (s.evaluation.ambiguous if s.evaluation else [])
         ],
         "web_results": list(s.web_search_results),
+        "law_results": list(s.law_results),
     },
     "markdown_to_pdf": lambda s: {
         "markdown_text": s.final_answer or "暂无内容",
@@ -140,9 +141,10 @@ PLANNER_SYSTEM = """
     - 如需要引用具体法律条文作为依据: 在检索案例后插入 fetch_laws 获取相关法条原文
     - 如评估结果为"不足": 插入 get_google_search 联网补充再分析
     - 如用户提及之前讨论过的话题: 先用 search_memory 搜索历史记忆获取上下文
-    - 如用户表达了个人偏好/情况: 在生成最终回答后用 save_to_memory 保存 (memory_type='user_fact')
+    - 一般情况下,在生成最终回答后用均使用 save_to_memory 保存
+    - 一般情况下不需要过多网络搜索,优先利用 RAG 检索到的案例;如案例不足再补充网络搜索
+    - 如用户要求输出 PDF 报告: 最后一步调用 markdown_to_pdf 生成 PDF 文件,可以在最后提示用户能生成对应的pdf格式
     - 简单闲聊: plan 为空数组 []
-    - 用户要求 PDF 输出时才用 markdown_to_pdf
     - tool_name 必须是上述列表中的名称,不需要工具则填写 null
 
     ## 用户问题
@@ -159,7 +161,11 @@ def planner_node(state: AgentState) -> dict:
 
     if not query:
         debug.info("← Planner 退出", detail="空输入", result="返回默认提示")
-        return {"plan": [], "reasoning": ["无输入"], "final_answer": "抱一丝,你能再说一遍吗?"}
+        return {
+            "plan": [],
+            "reasoning": ["无输入"],
+            "final_answer": "抱一丝,你能再说一遍吗?",
+        }
 
     tools_desc = "\n".join(f"- {t.name}: {t.description[:120]}" for t in ALL_TOOLS)
 
@@ -195,6 +201,11 @@ def planner_node(state: AgentState) -> dict:
                 ),
                 PlanStep(
                     step_id=3,
+                    description="检索法律条文",
+                    tool_name="fetch_laws",
+                ),
+                PlanStep(
+                    step_id=4,
                     description="综合信息生成法律分析",
                     tool_name="analyze_legal_issue",
                 ),
@@ -322,7 +333,7 @@ def executor_node(state: AgentState) -> dict:
         )
 
         debug.debug("Executor 调用 Flash LLM", detail=f"tool={step.tool_name}")
-        
+
         """
         这里是当前Executor节点的核心操作逻辑:
         在此之前,Planner节点已经生成了一个包含步骤描述和工具名称的计划
@@ -390,7 +401,11 @@ def executor_node(state: AgentState) -> dict:
                     tool_result_summary = f"answer_len={len(v)}"
                 elif k == "evaluation":
                     state_updates[k] = v
-                    verdict = v.get("quality_verdict", "") if isinstance(v, dict) else getattr(v, "quality_verdict", "")
+                    verdict = (
+                        v.get("quality_verdict", "")
+                        if isinstance(v, dict)
+                        else getattr(v, "quality_verdict", "")
+                    )
                     tool_result_summary = f"verdict={verdict}"
                 else:
                     state_updates[k] = v
@@ -405,7 +420,9 @@ def executor_node(state: AgentState) -> dict:
     debug.info(
         f"← Executor {status} [{idx + 1}/{total_steps}]",
         detail=f"tool={step.tool_name}",
-        result=f"{tool_result_summary} | elapsed={elapsed:.2f}s" if tool_result_summary else f"elapsed={elapsed:.2f}s",
+        result=f"{tool_result_summary} | elapsed={elapsed:.2f}s"
+        if tool_result_summary
+        else f"elapsed={elapsed:.2f}s",
     )
     return state_updates
 
@@ -446,12 +463,16 @@ REPLAN_CHECK_PROMPT = """
 def replan_check_node(state: AgentState) -> dict:
     """Flash LLM: 分析已执行步骤的结果,语义级判断是否需要重规划"""
     t0 = time.time()
-    debug.debug("→ 进入 Replan Check 节点 (Flash LLM)", detail="LLM 语义判断执行质量...")
+    debug.debug(
+        "→ 进入 Replan Check 节点 (Flash LLM)", detail="LLM 语义判断执行质量..."
+    )
 
     # 拼装已执行步骤摘要executed_summary
     steps_desc: list[str] = []
     for s in state.plan:
-        status_label = "✓" if s.status == "done" else "✗" if s.status == "failed" else "⋯"
+        status_label = (
+            "✓" if s.status == "done" else "✗" if s.status == "failed" else "⋯"
+        )
         steps_desc.append(
             f"[{status_label}] 步骤{s.step_id}: {s.description} → 工具: {s.tool_name or '无'}"
         )
@@ -479,7 +500,7 @@ def replan_check_node(state: AgentState) -> dict:
         chain = PromptTemplate.from_template(prompt) | llm_executor | StrOutputParser()
         raw = chain.invoke({})
         raw = raw.strip()
-        
+
         # 提取JSON部分,兼容 LLM 输出中夹带文本的情况
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1]
@@ -532,7 +553,7 @@ def _fallback_replan_check(state: AgentState) -> tuple[bool, str]:
 # Node 4: The Replanner — Pro LLM 重新规划
 
 
-REPLANNER_SYSTEM = """
+REPLANNER_SYSTEM_PROMPT = """
 你是任务规划师.基于已执行的步骤和当前结果,生成**补充步骤**.
 
 ## 已执行步骤
@@ -569,6 +590,7 @@ def replanner_node(state: AgentState) -> dict:
     """Pro LLM: 检查当前结果 → 生成补充计划 → 返回 Executor"""
     t0 = time.time()
     reason = state.replan_reason or "质量不足"
+
     debug.debug(
         "→ 进入 Replanner 节点",
         detail=f"原因: {reason} | 已完成{len(state.plan)}步",
@@ -583,26 +605,16 @@ def replanner_node(state: AgentState) -> dict:
     tools_desc = "\n".join(f"- {t.name}: {t.description[:120]}" for t in ALL_TOOLS)
 
     # 生成补充步骤
-    prompt = REPLANNER_SYSTEM.format(
-
+    prompt = REPLANNER_SYSTEM_PROMPT.format(
         executed_steps=executed,
-
         doc_count=len(state.rag_documents),
-
         quality=state.evaluation.quality_verdict if state.evaluation else "未评估",
-
         web_count=len(state.web_search_results),
-
         error=state.error or "无",
-
         replan_reason=state.replan_reason or "质量不足",
-
         available_tools=tools_desc,
-
         user_query=state.query,
-
         next_id=len(state.plan) + 1,
-
     )
 
     chain = llm_planner | StrOutputParser()
@@ -690,7 +702,9 @@ def finalize_node(state: AgentState) -> dict:
         return {}
 
     if state.rag_documents:
-        debug.debug("Finalize 兜底生成", detail=f"使用{len(state.rag_documents[:3])}条案例")
+        debug.debug(
+            "Finalize 兜底生成", detail=f"使用{len(state.rag_documents[:3])}条案例"
+        )
         docs = "\n".join(f"- {d.chunk_text[:300]}" for d in state.rag_documents[:3])
         prompt = PromptTemplate.from_template(
             "基于以下案例,简要回答用户问题.\n案例:\n{docs}\n\n问题: {query}\n\n法律建议:"
@@ -720,9 +734,13 @@ def route_after_planner(state: AgentState) -> str:
 
 MAX_ROUNDS = 10
 
+
+# 全步骤跳转条件函数
 def route_after_executor(state: AgentState) -> str:
     """还有步骤 → 继续 executor | 全部完成 → replan_check"""
-    target = "executor" if state.current_step_index < len(state.plan) else "replan_check"
+    target = (
+        "executor" if state.current_step_index < len(state.plan) else "replan_check"
+    )
     debug.debug(
         f"路由: Executor → {target}",
         detail=f"step={state.current_step_index}/{len(state.plan)}",
@@ -730,6 +748,7 @@ def route_after_executor(state: AgentState) -> str:
     return target
 
 
+# 设置最大轮数限制，防止无限重规划循环
 def route_after_replan_check(state: AgentState) -> str:
     """需重规划 → replanner | 质量通过 → finalize；超过 MAX_ROUNDS 强制终止"""
     executed = len(state.tool_calls)
