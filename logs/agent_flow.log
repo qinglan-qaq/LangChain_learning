@@ -2,3 +2,5 @@
 2026-05-22 09:58:12 | ERROR | string   | agent_flow           | 流程异常 | Graph 执行失败 | Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.
 For troubleshooting, visit: https://python.langchain.com/docs/troubleshooting/errors/GRAPH_RECURSION_LIMIT | Graph 执行失败 | Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.
 For troubleshooting, visit: https://python.langchain.com/docs/troubleshooting/errors/GRAPH_RECURSION_LIMIT
+2026-05-22 15:09:26 | INFO  | string   | agent_flow           | 流程开始 | 用户提问 | query=老婆在外出轨,我要求离婚,她死活不答应,怎么办我要离婚 | 用户提问 | query=老婆在外出轨,我要求离婚,她死活不答应,怎么办我要离婚
+2026-05-22 15:11:48 | INFO  | string   | agent_flow           | 流程结束 | 回答生成完毕 | answer_len=2287, tool_calls=5 | 总耗时=142.29s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, get_google_search, analyze_legal_issue | 回答生成完毕 | answer_len=2287, tool_calls=5 | 总耗时=142.29s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, get_google_search, analyze_legal_issue
