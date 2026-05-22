@@ -126,6 +126,9 @@ class AgentState(BaseModel):
     # 长期记忆检索结果
     memory_results: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # 法律条文检索结果 (fetch_laws 工具输出)
+    law_results: List[Dict[str, Any]] = Field(default_factory=list)
+
     # 长期记忆写入确认
     memory_update: Optional[Dict[str, Any]] = None
 

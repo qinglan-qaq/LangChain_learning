@@ -320,7 +320,7 @@ LEGAL_ANALYSIS_PROMPT_Saul = PromptTemplate.from_template(
 )
 
 @tool
-@traceable(run_type="tool", name="工具_法律问题分析")
+@traceable(run_type="tool", name="tool_法律问题分析")
 def analyze_legal_issue(
     query: str,
     correct_cases: Optional[list[dict[str, Any]]] = None,
@@ -390,7 +390,7 @@ def analyze_legal_issue(
 
     rag_log.debug("开始 LLM 法律分析生成", detail=f"context_len={len(context)}")
     
-    # 使用小金的人设提示词进行法律分析生成
+    # 使用小金Kim的人设提示词进行法律分析生成
     chain = LEGAL_ANALYSIS_PROMPT_Kim | llm | StrOutputParser()
 
     answer = chain.invoke({"context": context, "query": query})

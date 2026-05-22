@@ -81,6 +81,7 @@ _STATE_KEYS = {
     "is_pdf_output",
     "memory_results",
     "memory_update",
+    "law_results",
 }
 
 #  Flash LLM 降级:直接参数映射
@@ -110,6 +111,10 @@ _TOOL_FALLBACK_ARGS = {
         "markdown_text": s.final_answer or "暂无内容",
         "filename": f"legal_report_{s.query[:20]}.pdf",
     },
+    "fetch_laws": lambda s: {
+        "query": s.query,
+        "top_k": 5,
+    },
 }
 
 
@@ -132,7 +137,8 @@ PLANNER_SYSTEM = """
 
     ## 计划原则
     - 法律问题: retrieve_legal_knowledge → evaluate_case_relevance → analyze_legal_issue
-    - 如评估结果为"不足": 插入 get_google_search / fetch_webpage_text 再分析
+    - 如需要引用具体法律条文作为依据: 在检索案例后插入 fetch_laws 获取相关法条原文
+    - 如评估结果为"不足": 插入 get_google_search 联网补充再分析
     - 如用户提及之前讨论过的话题: 先用 search_memory 搜索历史记忆获取上下文
     - 如用户表达了个人偏好/情况: 在生成最终回答后用 save_to_memory 保存 (memory_type='user_fact')
     - 简单闲聊: plan 为空数组 []
@@ -712,6 +718,8 @@ def route_after_planner(state: AgentState) -> str:
     return target
 
 
+MAX_ROUNDS = 10
+
 def route_after_executor(state: AgentState) -> str:
     """还有步骤 → 继续 executor | 全部完成 → replan_check"""
     target = "executor" if state.current_step_index < len(state.plan) else "replan_check"
@@ -723,11 +731,18 @@ def route_after_executor(state: AgentState) -> str:
 
 
 def route_after_replan_check(state: AgentState) -> str:
-    """需重规划 → replanner | 质量通过 → finalize"""
+    """需重规划 → replanner | 质量通过 → finalize；超过 MAX_ROUNDS 强制终止"""
+    executed = len(state.tool_calls)
+    if executed >= MAX_ROUNDS:
+        debug.info(
+            f"路由: ReplanCheck → finalize (已达最大轮数)",
+            detail=f"tool_calls={executed}/{MAX_ROUNDS}",
+        )
+        return "finalize"
     target = "replanner" if state.replan_needed else "finalize"
     debug.debug(
         f"路由: ReplanCheck → {target}",
-        detail=f"replan_needed={state.replan_needed}",
+        detail=f"replan_needed={state.replan_needed} | executed={executed}",
     )
     return target
 

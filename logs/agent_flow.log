@@ -1,6 +1,4 @@
-2026-05-18 10:37:22 | INFO  | string   | agent_flow           | 流程开始 | 用户提问 | query=你好啊 你是谁? | 用户提问 | query=你好啊 你是谁?
-2026-05-18 10:37:27 | INFO  | string   | agent_flow           | 流程结束 | 回答生成完毕 | answer_len=17, tool_calls=0 | 总耗时=4.20s | 工具: 无 | 回答生成完毕 | answer_len=17, tool_calls=0 | 总耗时=4.20s | 工具: 无
-2026-05-18 10:39:26 | INFO  | string   | agent_flow           | 流程开始 | 用户提问 | query=查询数据库返回关于子女抚养权相关的案件 | 用户提问 | query=查询数据库返回关于子女抚养权相关的案件
-2026-05-18 10:41:41 | INFO  | string   | agent_flow           | 流程结束 | 回答生成完毕 | answer_len=1481, tool_calls=5 | 总耗时=134.89s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, analyze_legal_issue, get_google_search, analyze_legal_issue | 回答生成完毕 | answer_len=1481, tool_calls=5 | 总耗时=134.89s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, analyze_legal_issue, get_google_search, analyze_legal_issue
-2026-05-18 10:51:04 | INFO  | string   | agent_flow           | 流程开始 | 用户提问 | query=查询数据库返回关于子女抚养权相关的案件 | 用户提问 | query=查询数据库返回关于子女抚养权相关的案件
-2026-05-18 10:52:26 | INFO  | string   | agent_flow           | 流程结束 | 回答生成完毕 | answer_len=1200, tool_calls=4 | 总耗时=82.20s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, analyze_legal_issue, get_google_search | 回答生成完毕 | answer_len=1200, tool_calls=4 | 总耗时=82.20s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, analyze_legal_issue, get_google_search
+2026-05-22 09:51:39 | INFO  | string   | agent_flow           | 流程开始 | 用户提问 | query=长期酗酒的丈夫我已经受够了, 我要带着我的女儿离婚 | 用户提问 | query=长期酗酒的丈夫我已经受够了, 我要带着我的女儿离婚
+2026-05-22 09:58:12 | ERROR | string   | agent_flow           | 流程异常 | Graph 执行失败 | Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.
+For troubleshooting, visit: https://python.langchain.com/docs/troubleshooting/errors/GRAPH_RECURSION_LIMIT | Graph 执行失败 | Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.
+For troubleshooting, visit: https://python.langchain.com/docs/troubleshooting/errors/GRAPH_RECURSION_LIMIT
