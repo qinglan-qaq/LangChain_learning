@@ -254,7 +254,7 @@ def evaluate_case_relevance(
 # 风骚律师中小金(KIM)的人设提示词
 LEGAL_ANALYSIS_PROMPT_Kim = PromptTemplate.from_template(
     """
-    # Role: 资深法律顾问
+    # Role: kim Wexler (《风骚律师》中的冷静理智的资深律师)
 
     ## Profile
     你是一位经验丰富、务实沉稳的法律顾问,精通中国法律体系.
@@ -268,10 +268,11 @@ LEGAL_ANALYSIS_PROMPT_Kim = PromptTemplate.from_template(
 
     ## 分析要求
     1. 明确法律定性:一句话点出用户问题涉及的核心法律关系(如合同纠纷、侵权、婚姻财产分割、劳动争议等).
-    2. 引用参考案例:从提供的参考资料中提取相关判例,用案例说明法院的裁判思路,不要照搬原文,概括要点.
-    3. 指出关键风险:用户可能没意识到的法律陷阱、证据短板、时效问题.
-    4. 给出可行建议:具体的下一步行动,可以做什么、应该注意什么、可以找谁.
-    5. 区分确定与不确定:明确哪些结论有充分依据,哪些还需进一步核实.
+    2. 引用法条依据:如参考材料中有「相关法条」,优先引用具体法条原文作为法律依据,明确告知出处(法规名称+条款号).
+    3. 引用参考案例:从提供的参考资料中提取相关判例,用案例说明法院的裁判思路,不要照搬原文,概括要点.
+    4. 指出关键风险:用户可能没意识到的法律陷阱、证据短板、时效问题.
+    5. 给出可行建议:具体的下一步行动,可以做什么、应该注意什么、可以找谁.
+    6. 区分确定与不确定:明确哪些结论有充分依据,哪些还需进一步核实.
 
     ## 参考材料
     {context}
@@ -319,6 +320,7 @@ LEGAL_ANALYSIS_PROMPT_Saul = PromptTemplate.from_template(
 """
 )
 
+
 @tool
 @traceable(run_type="tool", name="tool_法律问题分析")
 def analyze_legal_issue(
@@ -326,21 +328,24 @@ def analyze_legal_issue(
     correct_cases: Optional[list[dict[str, Any]]] = None,
     ambiguous_cases: Optional[list[dict[str, Any]]] = None,
     web_results: Optional[List[str]] = None,
+    law_results: Optional[List[dict[str, Any]]] = None,
 ) -> dict:
-    """基于法律案例和网络资料,生成专业的法律分析和建议.
-    整合高质量案例、中等相关案例和外部网络资料作为分析依据.
+    """基于法律案例、法律条文和网络资料,生成专业的法律分析和建议.
+    整合高质量案例、中等相关案例、相关法条和外部网络资料作为分析依据.
 
     典型调用流程:
     1. 先调用 retrieve_legal_knowledge 获取案例列表
     2. 再调用 evaluate_case_relevance 评估质量
-    3. 如 quality_verdict 为"不足",则调用 get_google_search 联网补充
-    4. 最后调用本工具,传入 correct_cases / ambiguous_cases / web_results 生成最终分析
+    3. 如需要法律条文依据,调用 fetch_laws 获取相关法条原文
+    4. 如 quality_verdict 为"不足",则调用 get_google_search 联网补充
+    5. 最后调用本工具,传入 correct_cases / ambiguous_cases / law_results / web_results 以及最重要的法律条文law_results 并生成最终分析
 
     参数:
     query: 用户的法律问题
     correct_cases: 评估为 high-quality 的案例列表(来自 evaluate_case_relevance 的 correct 字段)
     ambiguous_cases: 评估为 medium-quality 的案例列表(来自 evaluate_case_relevance 的 ambiguous 字段)
     web_results: 网络搜索结果的文本列表(来自 get_google_search 的返回值),可选
+    law_results: 相关法律条文列表(来自 fetch_laws 的 law_results 字段)
 
     返回:
     结构化 dict,含 final_answer / crag_context / sources
@@ -349,9 +354,10 @@ def analyze_legal_issue(
     correct_n = len(correct_cases or [])
     ambig_n = len(ambiguous_cases or [])
     web_n = len(web_results or [])
+    law_n = len(law_results or [])
     tool_log.info(
         "→ 调用工具: analyze_legal_issue",
-        detail=f"query={query[:60]} | correct={correct_n} | ambiguous={ambig_n} | web={web_n}",
+        detail=f"query={query[:60]} | correct={correct_n} | ambiguous={ambig_n} | web={web_n} | law={law_n}",
     )
 
     llm = _get_llm()
@@ -359,23 +365,41 @@ def analyze_legal_issue(
     correct_cases = correct_cases or []
     ambiguous_cases = ambiguous_cases or []
     web_results = web_results or []
+    law_results = law_results or []
 
     parts = []
     sources = []
+
+    # 法律条文 (优先展示,作为权威依据)
+    for i, law in enumerate(law_results, 1):
+        title = law.get("law_title", "")
+        article_number = law.get("article_number", "")
+        content = law.get("content", "")
+        parts.append(f"法条: {title} 第{article_number}条\n{content}")
+        sources.append(f"法条: {title} 第{article_number}条")
+
+    # 案例部分,按照质量分档展示,高质量的案例会被 LLM 优先关注
     for doc in correct_cases:
-        cn = doc.get("case_number", "")
-        yr = doc.get("year", "")
-        parts.append(f"[高相关案例 | 案号:{cn} | {yr}年]\n{doc.get('chunk_text', '')}")
-        if cn:
-            sources.append(f"案例: {cn} ({yr})")
+        if doc:
+            cn = doc.get("case_number", "")
+            yr = doc.get("year", "")
+            chunk_text = doc.get('chunk_text', '')
+            parts.append(
+                f"[高相关案例 | 案号:{cn} | {yr}年]\n{chunk_text}"
+            )
+            if cn:
+                sources.append(f"案例: {cn} ({yr})")
+    # 中等相关的案例也可以参考,但要明确标注质量较低
     for doc in ambiguous_cases:
-        cn = doc.get("case_number", "")
-        yr = doc.get("year", "")
-        parts.append(
-            f"[中等相关案例 | 案号:{cn} | {yr}年]\n{doc.get('chunk_text', '')}"
-        )
-        if cn:
-            sources.append(f"案例: {cn} ({yr})")
+        if doc:
+            cn = doc.get("case_number", "")
+            yr = doc.get("year", "")
+            chunk_text = doc.get('chunk_text', '')
+            parts.append(
+                f"[中等相关案例 | 案号:{cn} | {yr}年]\n{chunk_text}"
+            )
+            if cn:
+                sources.append(f"案例: {cn} ({yr})")
 
     for i, snippet in enumerate(web_results, 1):
         content = (
@@ -389,19 +413,19 @@ def analyze_legal_issue(
     context = "\n\n---\n\n".join(parts) if parts else "暂无相关资料"
 
     rag_log.debug("开始 LLM 法律分析生成", detail=f"context_len={len(context)}")
-    
-    # 使用小金Kim的人设提示词进行法律分析生成
-    chain = LEGAL_ANALYSIS_PROMPT_Kim | llm | StrOutputParser()
+
+    chain = LEGAL_ANALYSIS_PROMPT_Saul | llm | StrOutputParser()
 
     answer = chain.invoke({"context": context, "query": query})
 
     elapsed = time.time() - t0
-    
+
     tool_log.info(
         "← 工具返回: analyze_legal_issue",
         detail=f"context_len={len(context)} | sources={len(sources)}",
         result=f"answer_len={len(answer)} | elapsed={elapsed:.2f}s",
     )
+    
     return {
         "final_answer": answer,
         "crag_context": context,
