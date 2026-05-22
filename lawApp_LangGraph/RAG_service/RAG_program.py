@@ -348,11 +348,11 @@ class RAG_service:
             result=f"elapsed={time.time() - t_embed:.2f}s",
         )
         
-        # 将 dict 显式转换为 SparseVector 对象
-        sparse_vec_obj = SparseVector(
-            indices=sparse_vec["indices"],
-            values=sparse_vec["values"],
-        )
+        # 使用dict格式的稀疏向量，确保兼容hybrid_convex_scale函数
+        sparse_vec_obj = {
+            "indices": sparse_vec["indices"],
+            "values": sparse_vec["values"],
+        }
 
         # 使用官方混合凸组合函数
         weighted_dense, weighted_sparse = hybrid_convex_scale(
