@@ -24,14 +24,19 @@ class RetrievedDocument(BaseModel):
 
     rank: int = 0
     id: str = ""
-    rerank_score: float = 0.0
     hybrid_score: float = 0.0
     year: str = ""
     case_number: str = ""
     case_cause: str = ""
     chunk_text: str = ""
 
+class WebSearchResult(BaseModel):
+    """单条网络检索结果"""
 
+    title: str = ""
+    link: str = ""
+    snippet: str = ""
+    
 class EvaluationResult(BaseModel):
     """evaluate_case_relevance 工具返回 — CRAG 三档评估"""
 
