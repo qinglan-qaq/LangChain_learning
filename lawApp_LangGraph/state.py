@@ -148,6 +148,9 @@ class AgentState(BaseModel):
     # 最终回答的提示词(包含所有上下文信息,rag资料,工具结果等)
     final_prompts: str = ""
 
+    # 结构化提示词记录 (评估结果 + 网络检索 + 法条检索)
+    prompts_record: PromptsRecord = Field(default_factory=PromptsRecord)
+
     # 工具调用跟踪
     tool_calls: List[ToolCallRecord] = Field(default_factory=list)
 
@@ -167,7 +170,7 @@ class AgentState(BaseModel):
     memory_results: List[Dict[str, Any]] = Field(default_factory=list)
 
     # 法律条文检索结果 (fetch_laws 工具输出)
-    law_results: List[Dict[str, Any]] = Field(default_factory=list)
+    law_results: List[LawsResult] = Field(default_factory=list)
 
     # 长期记忆写入确认
     memory_update: Optional[Dict[str, Any]] = None

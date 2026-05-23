@@ -181,3 +181,8 @@
 2026-05-23 15:16:45 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
 2026-05-23 15:17:17 | INFO  | agent_te | system               | 初始化 RAG_service (冷启动) | 首次加载嵌入模型 + 重排序模型 + BM25 编码器 | 首次加载嵌入模型 + 重排序模型 + BM25 编码器
 2026-05-23 15:17:43 | INFO  | agent_te | system               | RAG_service 初始化完成 | 嵌入 + 重排序 + BM25 模型已就绪 | 嵌入 + 重排序 + BM25 模型已就绪
+2026-05-23 15:18:38 | INFO  | agent_te | system               | 初始化 Memory Embedder (冷启动) | model=BAAI/bge-large-zh-v1.5 | model=BAAI/bge-large-zh-v1.5
+2026-05-23 15:19:30 | INFO  | -        | system               | POST /ask | status=200 | elapsed=164.636s | status=200 | elapsed=164.636s
+2026-05-23 15:26:12 | INFO  | -        | system               | 系统关闭 | 服务正在关闭 | 服务正在关闭
+2026-05-23 15:27:11 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-23 15:28:34 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.335s | status=200 | elapsed=0.335s

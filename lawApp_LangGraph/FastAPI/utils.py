@@ -40,11 +40,17 @@ def build_sources(state: dict) -> list[SourceInfo]:
             sources.append(SourceInfo(case_number=cn, year=yr, snippet=txt[:200]))
 
     for item in state.get("web_search_snippets", []) or []:
+        if isinstance(item, dict):
+            title, link, snippet = item.get("title", ""), item.get("link", ""), item.get("snippet", "")
+        else:
+            title = getattr(item, "title", "")
+            link = getattr(item, "link", "")
+            snippet = getattr(item, "snippet", "")
         sources.append(
             SourceInfo(
-                title=item.get("title", ""),
-                link=item.get("link", ""),
-                snippet=item.get("snippet", ""),
+                title=title,
+                link=link,
+                snippet=snippet,
             )
         )
 

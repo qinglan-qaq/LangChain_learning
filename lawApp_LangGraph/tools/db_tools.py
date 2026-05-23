@@ -16,6 +16,7 @@ from langchain_core.tools import tool
 from sentence_transformers import SentenceTransformer
 
 from lawApp_LangGraph.FastAPI.logging import tool as tool_log, system as sys_log
+from lawApp_LangGraph.state import LawsResult
 from langsmith import traceable
 
 load_dotenv()
@@ -163,7 +164,7 @@ def fetch_laws(query: str, top_k: int = 5) -> dict:
     top_k: 返回条数,默认 5
 
     返回:
-    dict, 含 law_results 列表,每项为 {law_title, chapter, article_number, content, similarity}
+    dict, 含 law_results 列表,每项为 LawsResult 实例
     """
     t0 = time.time()
     tool_log.info(
@@ -192,17 +193,17 @@ def fetch_laws(query: str, top_k: int = 5) -> dict:
     cur.close()
 
     laws = [
-        {
-            "law_title": r[0],
-            "chapter": r[1] or "",
-            "article_number": r[2],
-            "content": r[3][:600],
-            "similarity": round(float(r[4]), 4),
-        }
+        LawsResult(
+            law_title=r[0],
+            chapter=r[1] or "",
+            article_number=r[2],
+            content=r[3][:600],
+        )
         for r in rows
     ]
 
-    top_sim = laws[0]["similarity"] if laws else 0
+    top_sim = rows[0][4] if rows else 0
+    top_sim = float(top_sim)
     tool_log.info(
         "← 工具返回: fetch_laws",
         detail=f"命中{len(laws)}条法条",

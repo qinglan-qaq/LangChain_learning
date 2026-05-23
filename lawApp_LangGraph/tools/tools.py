@@ -15,6 +15,7 @@ from langchain_community.utilities import SerpAPIWrapper
 from langchain_core.tools import tool
 
 from lawApp_LangGraph.FastAPI.logging import tool as tool_log
+from lawApp_LangGraph.state import WebSearchResult
 from langsmith import traceable
 
 
@@ -35,8 +36,7 @@ def get_google_search(query: str) -> dict:
     query: 搜索关键词,中文或英文
 
     返回:
-    dict,含 results 列表和格式化的 web_search_results:
-    [{"title": "...", "link": "...", "snippet": "..."}, ...]
+    dict,含 web_search_results 列表,每项为 WebSearchResult 实例
     """
     t0 = time.time()
     tool_log.info(
@@ -50,11 +50,11 @@ def get_google_search(query: str) -> dict:
     structured = []
     for res in raw.get("organic_results", [])[:8]:
         structured.append(
-            {
-                "title": res.get("title", ""),
-                "link": res.get("link", ""),
-                "snippet": res.get("snippet", "")
-            }
+            WebSearchResult(
+                title=res.get("title", ""),
+                link=res.get("link", ""),
+                snippet=res.get("snippet", ""),
+            )
         )
     if not structured:
         tool_log.info(

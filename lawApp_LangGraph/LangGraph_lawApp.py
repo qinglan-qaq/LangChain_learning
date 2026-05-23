@@ -84,6 +84,7 @@ _STATE_KEYS = {
     "memory_results",
     "memory_update",
     "law_results",
+    "prompts_record",
 }
 
 #  Flash LLM 降级:直接参数映射
@@ -393,15 +394,18 @@ def executor_node(state: AgentState) -> dict:
         for k, v in tool_output.items():
             if k in _STATE_KEYS:
                 if k == "web_search_results":
-                    # 工具返回 [{title, link, snippet}, ...]，需格式化为 List[str] 存入 state
+                    # 工具返回 WebSearchResult 列表,格式化为 List[str] 存入 state
                     formatted: list[str] = []
-                    raw_snippets: list[dict] = []
+                    raw_snippets: list = []
                     for item in v:
                         if isinstance(item, str):
                             formatted.append(item)
                         else:
+                            title = getattr(item, "title", "") or (item.get("title", "") if isinstance(item, dict) else "")
+                            link = getattr(item, "link", "") or (item.get("link", "") if isinstance(item, dict) else "")
+                            snippet = getattr(item, "snippet", "") or (item.get("snippet", "") if isinstance(item, dict) else "")
                             formatted.append(
-                                f"[搜索结果 | {item.get('title', '')} | {item.get('link', '')}]\n{item.get('snippet', '')}"
+                                f"[搜索结果 | {title} | {link}]\n{snippet}"
                             )
                             raw_snippets.append(item)
                     state_updates[k] = list(state.web_search_results) + formatted
@@ -423,6 +427,12 @@ def executor_node(state: AgentState) -> dict:
                         else getattr(v, "quality_verdict", "")
                     )
                     tool_result_summary = f"verdict={verdict}"
+                elif k == "law_results":
+                    state_updates[k] = list(state.law_results) + v
+                    tool_result_summary = f"law_results={len(v)}条"
+                elif k == "prompts_record":
+                    state_updates[k] = v
+                    tool_result_summary = "prompts_record已更新"
                 else:
                     state_updates[k] = v
 

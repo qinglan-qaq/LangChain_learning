@@ -106,7 +106,7 @@ async def ask(request: QueryRequest):
 
 # SSE 流式询问接口
 @app.get("/ask/stream")
-async def ask_stream(query: str, session_id: str | None = None):
+async def ask_stream(query: str = "", session_id: str | None = None):
     """SSE 流式问答: 实时推送规划、工具调用进度和最终回答."""
     sid = ensure_session(session_id)
     set_session(sid)
