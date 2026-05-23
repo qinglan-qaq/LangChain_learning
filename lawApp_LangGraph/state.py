@@ -30,13 +30,34 @@ class RetrievedDocument(BaseModel):
     case_cause: str = ""
     chunk_text: str = ""
 
+
+class simpleRetrievedDocument(BaseModel):
+    """单条检索到的法律案例文档块"""
+
+    id: str = ""
+    year: str = ""
+    case_number: str = ""
+    case_cause: str = ""
+    chunk_text: str = ""
+
+
+class LawsResult(BaseModel):
+    """fetch_laws 工具返回的法律条文结果"""
+
+    law_title: str = ""
+    chapter: str = ""
+    article_number: str = ""
+    content: str = ""
+
+
 class WebSearchResult(BaseModel):
     """单条网络检索结果"""
 
     title: str = ""
     link: str = ""
     snippet: str = ""
-    
+
+
 class EvaluationResult(BaseModel):
     """evaluate_case_relevance 工具返回 — CRAG 三档评估"""
 
@@ -45,10 +66,25 @@ class EvaluationResult(BaseModel):
     ambiguous_count: int = 0
     incorrect_count: int = 0
     quality_verdict: str = ""
-    correct: List[RetrievedDocument] = Field(default_factory=list)
-    ambiguous: List[RetrievedDocument] = Field(default_factory=list)
-    incorrect: List[RetrievedDocument] = Field(default_factory=list)
+    correct: List[simpleRetrievedDocument] = Field(default_factory=list)
+    ambiguous: List[simpleRetrievedDocument] = Field(default_factory=list)
+    incorrect: List[simpleRetrievedDocument] = Field(default_factory=list)
     error: Optional[str] = None
+
+
+class PromptsRecord(BaseModel):
+    """记录最终回答的提示词内容"""
+
+    #   query: 用户原始提问
+    query: str = ""
+    #  网络检索结果
+    web_search_results: List[WebSearchResult] = Field(default_factory=list)
+    # 评估结果
+    evluate_retrieved_documents: List[simpleRetrievedDocument] = Field(
+        default_factory=list
+    )
+    # 法律条文结果
+    laws_results: List[LawsResult] = Field(default_factory=list)
 
 
 #  B. 计划执行层 — Plan & Execute Models
@@ -71,6 +107,7 @@ class PlanStep(BaseModel):
 
 class ToolCallRecord(BaseModel):
     """单次工具调用的记录"""
+
     step_id: int
     tool_name: str
     tool_input: Dict[str, Any] = Field(default_factory=dict)
@@ -79,6 +116,7 @@ class ToolCallRecord(BaseModel):
 
 
 #  C. 顶层 — AgentState(Plan & Execute Agent)
+
 
 class AgentState(BaseModel):
     """Plan & Execute Agent 的全局状态"""
@@ -107,6 +145,9 @@ class AgentState(BaseModel):
     # 最终回答结果
     final_answer: str = ""
 
+    # 最终回答的提示词(包含所有上下文信息,rag资料,工具结果等)
+    final_prompts: str = ""
+
     # 工具调用跟踪
     tool_calls: List[ToolCallRecord] = Field(default_factory=list)
 
@@ -119,18 +160,8 @@ class AgentState(BaseModel):
     # 评估结果
     evaluation: EvaluationResult = Field(default_factory=EvaluationResult)
 
-    # 网络检索结果（格式化文本，供分析节点拼装上下文）
-    web_search_results: List[str] = Field(default_factory=list)
-    # 网络检索结构化摘要（供前端展示 source 信息）
-    web_search_snippets: List[Dict[str, Any]] = Field(default_factory=list)
-    # 网络检索元信息
-    web_search_metadata: Optional[Dict[str, Any]] = None
-
     # 拼装后的 CRAG 上下文
     crag_context: str = ""
-
-    # 扩展搜索与知识
-    statute_results: List[Dict[str, Any]] = Field(default_factory=list)
 
     # 长期记忆检索结果
     memory_results: List[Dict[str, Any]] = Field(default_factory=list)
@@ -144,7 +175,6 @@ class AgentState(BaseModel):
     # CRAG 管线兼容字段(LangGraph 路由用)
     is_law_questions: bool = False
     is_simple_questions: bool = False
-    final_prompts: str = ""
     pdf_path: Optional[str] = None
 
     # 流程控制
