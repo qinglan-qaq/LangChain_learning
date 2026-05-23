@@ -4,3 +4,110 @@ For troubleshooting, visit: https://python.langchain.com/docs/troubleshooting/er
 For troubleshooting, visit: https://python.langchain.com/docs/troubleshooting/errors/GRAPH_RECURSION_LIMIT
 2026-05-22 15:09:26 | INFO  | string   | agent_flow           | 流程开始 | 用户提问 | query=老婆在外出轨,我要求离婚,她死活不答应,怎么办我要离婚 | 用户提问 | query=老婆在外出轨,我要求离婚,她死活不答应,怎么办我要离婚
 2026-05-22 15:11:48 | INFO  | string   | agent_flow           | 流程结束 | 回答生成完毕 | answer_len=2287, tool_calls=5 | 总耗时=142.29s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, get_google_search, analyze_legal_issue | 回答生成完毕 | answer_len=2287, tool_calls=5 | 总耗时=142.29s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, get_google_search, analyze_legal_issue
+2026-05-23 10:14:14 | INFO  | 26/5/23/ | agent_flow           | 流程开始 | 用户提问 | query=张某（男）与李某（女）于2018年登记结婚。2020年3月，张某因工作调动至外地，双方开始异地生活，期间每月通话2-3次，每年春节团聚3-5天。2022年5月， | 用户提问 | query=张某（男）与李某（女）于2018年登记结婚。2020年3月，张某因工作调动至外地，双方开始异地生活，期间每月通话2-3次，每年春节团聚3-5天。2022年5月，
+2026-05-23 10:17:04 | INFO  | 26/5/23/ | agent_flow           | 流程结束 | 回答生成完毕 | answer_len=1704, tool_calls=8 | 总耗时=170.55s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, analyze_legal_issue, save_to_memory, get_google_search, analyze_legal_issue, save_to_memory | 回答生成完毕 | answer_len=1704, tool_calls=8 | 总耗时=170.55s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, analyze_legal_issue, save_to_memory, get_google_search, analyze_legal_issue, save_to_memory
+2026-05-23 10:51:41 | INFO  | agent_te | agent_flow           | 流程开始 | 用户提问 | query=张某（男）与李某（女）于2018年登记结婚。2020年3月，张某因工作调动至外地，双方开始异地生活，期间每月通话2-3次，每年春节团聚3-5天。2022年5月， | 用户提问 | query=张某（男）与李某（女）于2018年登记结婚。2020年3月，张某因工作调动至外地，双方开始异地生活，期间每月通话2-3次，每年春节团聚3-5天。2022年5月，
+2026-05-23 10:53:31 | ERROR | agent_te | agent_flow           | 流程异常 | Graph 执行失败 | 8 validation errors for AgentState
+web_search_results.0
+  Input should be a valid string [type=string_type, input_value={'title': '腾禾问答...认定法律意义 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.1
+  Input should be a valid string [type=string_type, input_value={'title': '【以案释...状态的当事人 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.2
+  Input should be a valid string [type=string_type, input_value={'title': '两个人不...夫妻双方自愿 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.3
+  Input should be a valid string [type=string_type, input_value={'title': '夫妻离婚...及因住房问题 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.4
+  Input should be a valid string [type=string_type, input_value={'title': '离婚纠纷...又分居满一年。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.5
+  Input should be a valid string [type=string_type, input_value={'title': '如何理解...予离婚。至于 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.6
+  Input should be a valid string [type=string_type, input_value={'title': '分居的法...千零七十九条 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.7
+  Input should be a valid string [type=string_type, input_value={'title': '【漯法说...当准予离婚。”.'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type | Graph 执行失败 | 8 validation errors for AgentState
+web_search_results.0
+  Input should be a valid string [type=string_type, input_value={'title': '腾禾问答...认定法律意义 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.1
+  Input should be a valid string [type=string_type, input_value={'title': '【以案释...状态的当事人 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.2
+  Input should be a valid string [type=string_type, input_value={'title': '两个人不...夫妻双方自愿 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.3
+  Input should be a valid string [type=string_type, input_value={'title': '夫妻离婚...及因住房问题 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.4
+  Input should be a valid string [type=string_type, input_value={'title': '离婚纠纷...又分居满一年。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.5
+  Input should be a valid string [type=string_type, input_value={'title': '如何理解...予离婚。至于 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.6
+  Input should be a valid string [type=string_type, input_value={'title': '分居的法...千零七十九条 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.7
+  Input should be a valid string [type=string_type, input_value={'title': '【漯法说...当准予离婚。”.'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+2026-05-23 11:42:31 | INFO  | agent_te | agent_flow           | 流程开始 | 用户提问 | query=张某（男）与李某（女）于2018年登记结婚。2020年3月，张某因工作调动至外地，双方开始异地生活，期间每月通话2-3次，每年春节团聚3-5天。2022年5月， | 用户提问 | query=张某（男）与李某（女）于2018年登记结婚。2020年3月，张某因工作调动至外地，双方开始异地生活，期间每月通话2-3次，每年春节团聚3-5天。2022年5月，
+2026-05-23 11:46:07 | ERROR | agent_te | agent_flow           | 流程异常 | Graph 执行失败 | 8 validation errors for AgentState
+web_search_results.0
+  Input should be a valid string [type=string_type, input_value={'title': '法院在什...应当准予离婚。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.1
+  Input should be a valid string [type=string_type, input_value={'title': '法院如何...当进行调解; ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.2
+  Input should be a valid string [type=string_type, input_value={'title': '《中华人...婚后，双方又 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.3
+  Input should be a valid string [type=string_type, input_value={'title': '《民法典...》1079条吸收 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.4
+  Input should be a valid string [type=string_type, input_value={'title': '中华人民...外调解. 诉讼 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.5
+  Input should be a valid string [type=string_type, input_value={'title': '新的民法...双方又分居满 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.6
+  Input should be a valid string [type=string_type, input_value={'title': '夫妻离婚...夫妻分居没有 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.7
+  Input should be a valid string [type=string_type, input_value={'title': '北京市人...是否必须离婚。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type | Graph 执行失败 | 8 validation errors for AgentState
+web_search_results.0
+  Input should be a valid string [type=string_type, input_value={'title': '法院在什...应当准予离婚。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.1
+  Input should be a valid string [type=string_type, input_value={'title': '法院如何...当进行调解; ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.2
+  Input should be a valid string [type=string_type, input_value={'title': '《中华人...婚后，双方又 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.3
+  Input should be a valid string [type=string_type, input_value={'title': '《民法典...》1079条吸收 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.4
+  Input should be a valid string [type=string_type, input_value={'title': '中华人民...外调解. 诉讼 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.5
+  Input should be a valid string [type=string_type, input_value={'title': '新的民法...双方又分居满 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.6
+  Input should be a valid string [type=string_type, input_value={'title': '夫妻离婚...夫妻分居没有 ...'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+web_search_results.7
+  Input should be a valid string [type=string_type, input_value={'title': '北京市人...是否必须离婚。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/string_type
+2026-05-23 12:19:28 | INFO  | agent_te | agent_flow           | 流程开始 | 用户提问 | query=张某（男）与李某（女）于2018年登记结婚。2020年3月，张某因工作调动至外地，双方开始异地生活，期间每月通话2-3次，每年春节团聚3-5天。2022年5月， | 用户提问 | query=张某（男）与李某（女）于2018年登记结婚。2020年3月，张某因工作调动至外地，双方开始异地生活，期间每月通话2-3次，每年春节团聚3-5天。2022年5月，
+2026-05-23 12:21:57 | INFO  | agent_te | agent_flow           | 流程结束 | 回答生成完毕 | answer_len=268, tool_calls=6 | 总耗时=149.47s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, get_google_search, analyze_legal_issue, save_to_memory | 回答生成完毕 | answer_len=268, tool_calls=6 | 总耗时=149.47s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, get_google_search, analyze_legal_issue, save_to_memory
+2026-05-23 13:31:10 | INFO  | agent_te | agent_flow           | 流程开始 | 用户提问 | query=孙某（女）与刘某（男）婚后育有一子（10个月）。孙某产后被诊断为中度抑郁症，但经治疗已控制，目前正常工作（月薪8000元），能独立照顾婴儿。刘某无稳定工作（月收 | 用户提问 | query=孙某（女）与刘某（男）婚后育有一子（10个月）。孙某产后被诊断为中度抑郁症，但经治疗已控制，目前正常工作（月薪8000元），能独立照顾婴儿。刘某无稳定工作（月收
+2026-05-23 13:34:45 | INFO  | agent_te | agent_flow           | 流程结束 | 回答生成完毕 | answer_len=2344, tool_calls=12 | 总耗时=214.60s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, get_google_search, analyze_legal_issue, save_to_memory, retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, get_google_search, analyze_legal_issue, save_to_memory | 回答生成完毕 | answer_len=2344, tool_calls=12 | 总耗时=214.60s | 工具: retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, get_google_search, analyze_legal_issue, save_to_memory, retrieve_legal_knowledge, evaluate_case_relevance, fetch_laws, get_google_search, analyze_legal_issue, save_to_memory
+2026-05-23 15:16:45 | INFO  | agent_te | agent_flow           | 流程开始 | 用户提问 | query=林某（女）与郑某（男）结婚8年。林某提交证据：①报警记录3次，其中1次派出所出具《家庭暴力告诫书》；②医院诊断证明（多处软组织挫伤）；③郑某与另一女性微信聊天记 | 用户提问 | query=林某（女）与郑某（男）结婚8年。林某提交证据：①报警记录3次，其中1次派出所出具《家庭暴力告诫书》；②医院诊断证明（多处软组织挫伤）；③郑某与另一女性微信聊天记

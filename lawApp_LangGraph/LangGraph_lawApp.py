@@ -77,6 +77,8 @@ _STATE_KEYS = {
     "final_answer",
     "crag_context",
     "web_search_results",
+    "web_search_snippets",
+    "web_search_metadata",
     "pdf_path",
     "is_pdf_output",
     "memory_results",
@@ -391,7 +393,21 @@ def executor_node(state: AgentState) -> dict:
         for k, v in tool_output.items():
             if k in _STATE_KEYS:
                 if k == "web_search_results":
-                    state_updates[k] = list(state.web_search_results) + v
+                    # 工具返回 [{title, link, snippet}, ...]，需格式化为 List[str] 存入 state
+                    formatted: list[str] = []
+                    raw_snippets: list[dict] = []
+                    for item in v:
+                        if isinstance(item, str):
+                            formatted.append(item)
+                        else:
+                            formatted.append(
+                                f"[搜索结果 | {item.get('title', '')} | {item.get('link', '')}]\n{item.get('snippet', '')}"
+                            )
+                            raw_snippets.append(item)
+                    state_updates[k] = list(state.web_search_results) + formatted
+                    # 同时保存结构化摘要供前端展示
+                    existing_snippets = getattr(state, "web_search_snippets", []) or []
+                    state_updates["web_search_snippets"] = existing_snippets + raw_snippets
                     tool_result_summary = f"web_results={len(v)}条"
                 elif k == "rag_documents":
                     state_updates[k] = v

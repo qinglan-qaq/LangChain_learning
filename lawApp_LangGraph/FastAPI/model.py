@@ -29,6 +29,8 @@ class SourceInfo(BaseModel):
     case_number: str = ""
     year: str = ""
     snippet: str = ""
+    title: str = ""
+    link: str = ""
 
 
 class QueryResponse(BaseModel):

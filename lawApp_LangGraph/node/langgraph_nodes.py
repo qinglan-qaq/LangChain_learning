@@ -42,6 +42,8 @@ def start_node(state: AgentState) -> dict:
         "rag_documents": [],
         "evaluation": EvaluationResult(),
         "web_search_results": [],
+        "web_search_snippets": [],
+        "web_search_metadata": None,
         "crag_context": "",
         "final_prompts": "",
         "final_answer": "",
@@ -347,7 +349,7 @@ def create_web_search_node(
             try:
                 raw = get_google_search.invoke({"query": keyword})
                 parsed = json.loads(raw) if isinstance(raw, str) else raw
-                for item in parsed.get("results", []):
+                for item in parsed.get("web_search_results", []):
                     link = item.get("link", "")
                     snippet = item.get("snippet", "")
                     if snippet or link:
@@ -402,6 +404,7 @@ def create_web_search_node(
 
         return {
             "web_search_results": formatted_results,
+            "web_search_snippets": unique_snippets,
             "web_search_metadata": {
                 "strategy": search_strategy,
                 "snippet_count": len(unique_snippets),
@@ -505,6 +508,8 @@ def memory_update_node(state: AgentState) -> dict:
         "rag_documents": [],
         "evaluation": EvaluationResult(),
         "web_search_results": [],
+        "web_search_snippets": [],
+        "web_search_metadata": None,
         "crag_context": "",
         "final_prompts": "",
         "final_answer": "",

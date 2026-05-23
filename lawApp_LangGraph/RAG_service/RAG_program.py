@@ -1,4 +1,5 @@
 import hashlib
+import os
 import re
 import time
 from typing import Any
@@ -15,9 +16,20 @@ from pinecone_text.hybrid import hybrid_convex_scale
 from pinecone_text.sparse import BM25Encoder
 from sentence_transformers import CrossEncoder
 from lawApp_LangGraph.FastAPI.logging import rag as rag_log
-from pinecone_text.sparse import SparseVector
 
 load_dotenv()
+
+# ---- HuggingFace 镜像 & 下载配置 ----
+# 在加载任何 HF 模型之前设置, 避免被镜像网络问题打断
+_hf_endpoint = os.getenv("HF_ENDPOINT", "https://huggingface.co")
+os.environ["HF_ENDPOINT"] = _hf_endpoint
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "300")
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "120")
+
+rag_log.debug(
+    "HuggingFace 镜像配置",
+    detail=f"HF_ENDPOINT={_hf_endpoint}",
+)
 
 
 class RAG_service:
@@ -72,9 +84,9 @@ class RAG_service:
         self.reranker = CrossEncoder("BAAI/bge-reranker-large", max_length=512)
 
         # 稀疏向量
-        self.bm25 = BM25Encoder().load(
-            "E:\\LangChain\\lawApp_LangGraph\\RAG_service\\bm25_law_params.json"
-        )
+        bm25_path = os.getenv("BM25_PATH")
+        
+        self.bm25 = BM25Encoder().load(bm25_path)
 
         # 密集向量
         model_name = "BAAI/bge-large-zh-v1.5"
@@ -220,7 +232,7 @@ class RAG_service:
                 sparse_vector = self.bm25.encode_documents(chunk)
 
                 # 过滤空稀疏向量 (BM25 对极短文本可能返回空)
-                if not sparse_vector["values"] or not sparse_vector["indices"]:
+                if not sparse_vector["values"] or not sparse_vector["indices"]:  # type: ignore
                     continue
 
                 """
@@ -347,7 +359,7 @@ class RAG_service:
             detail=f"dense_dim={len(dense_vec)}",
             result=f"elapsed={time.time() - t_embed:.2f}s",
         )
-        
+
         # 使用dict格式的稀疏向量，确保兼容hybrid_convex_scale函数
         sparse_vec_obj = {
             "indices": sparse_vec["indices"],
@@ -428,5 +440,3 @@ class RAG_service:
             result=f"top_score={top_score:.3f} | total={time.time() - t_total:.2f}s",
         )
         return reranked[:effective_n]
-
-

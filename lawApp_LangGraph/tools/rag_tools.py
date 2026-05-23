@@ -79,15 +79,14 @@ def _get_llm():
 
 # Tool 1: 法律案例检索
 
-
 @tool
 @traceable(run_type="tool", name="tool_法律知识检索")
 def retrieve_legal_knowledge(
     query: str,
     top_k: int = 20,
     rerank_top_n: int = 5,
-    alpha: float = 0.7,
-    namespace: str = "legal_cases",
+    alpha: float = 0.4,
+    namespace: str = "law_cases",
 ) -> dict:
     """从法律案例库中检索相关判例.使用混合检索(语义向量 + BM25 关键词匹配)与
     CrossEncoder 重排序,返回最相关的案例内容及其相关性评分.
@@ -101,8 +100,8 @@ def retrieve_legal_knowledge(
     query: 法律问题查询语句,中文
     top_k: 初始召回数量,默认 20
     rerank_top_n: 重排序后返回数量,默认 5 (从 top_k 中选出最相关的 5 条)
-    alpha: 混合检索中的权重参数,默认 0.7 (越接近 1 越重视语义匹配,越接近 0 越重视关键词匹配)
-    namespace: 检索的命名空间,默认 "legal_cases"
+    alpha: 混合检索中的权重参数,默认 0.4 (越接近 1 越重视语义匹配,越接近 0 越重视关键词匹配)
+    namespace: 检索的命名空间,默认 "law_cases"
     返回:
     结构化 dict,含 status / rag_documents 字段,
     每个文档为 RetrievedDocument 格式(case_number / case_cause / rerank_score / chunk_text 等)
@@ -131,13 +130,12 @@ def retrieve_legal_knowledge(
         return {"status": "empty", "message": "未检索到相关案例", "rag_documents": []}
 
     results = []
-    for i, match in enumerate(matches):
+    for match in matches:
         meta = match.metadata or {}
         results.append(
             {
-                "rank": i + 1,
+                "rank": 0,  # 排序后重新分配
                 "id": match.id,
-                "rerank_score": round(getattr(match, "rerank_score", 0.0), 4),
                 "hybrid_score": round(match.score, 4)
                 if hasattr(match, "score")
                 else 0.0,
@@ -148,7 +146,13 @@ def retrieve_legal_knowledge(
             }
         )
 
-    top_score = results[0]["rerank_score"] if results else 0
+    # 按 hybrid_score 降序排列,重新分配 rank
+    results.sort(key=lambda r: r["hybrid_score"], reverse=True)
+    for i, r in enumerate(results):
+        r["rank"] = i + 1
+
+    top_score = results[0]["hybrid_score"] if results else 0
+    
     tool_log.info(
         "← 工具返回: retrieve_legal_knowledge",
         detail=f"返回{len(results)}条案例 | top_score={top_score:.3f}",
@@ -159,7 +163,7 @@ def retrieve_legal_knowledge(
 
 # Tool 2: 检索质量评估 (CRAG 三档)
 
-CORRECT_THRESHOLD = 0.7
+CORRECT_THRESHOLD = 0.6
 INCORRECT_THRESHOLD = 0.3
 MIN_QUALITY_DOCS = 3
 
@@ -214,7 +218,7 @@ def evaluate_case_relevance(
     correct, ambiguous, incorrect = [], [], []
 
     for doc in documents:
-        score = doc.get("rerank_score", 0.0)
+        score = doc.get("rerank_score")
         if score >= CORRECT_THRESHOLD:
             correct.append(doc)
         elif score >= INCORRECT_THRESHOLD:
@@ -262,17 +266,20 @@ LEGAL_ANALYSIS_PROMPT_Kim = PromptTemplate.from_template(
     你的职责是用专业和冷静帮他们看清局面、找到出路.
 
     ## Tone and Style
-    1. 清醒且坚定:面对当事人的情绪宣泄或抱怨,给予简短有力的共情,随后立刻切入法律事实和可行方案.
+    1. 清醒且坚定:首先自我介绍,简短表达强大的业务能力,面对当事人的情绪宣泄或抱怨,给予简短有力的共情,随后立刻切入法律事实和可行方案.
     2. 极度务实:直击痛点,不谈虚无缥缈的道德评判,只谈证据、权利、程序、风险.
     3. 沉稳的掌控感:逻辑严密,用专业度给当事人安全感.用普通人听得懂的大白话来分析问题.
 
     ## 分析要求
     1. 明确法律定性:一句话点出用户问题涉及的核心法律关系(如合同纠纷、侵权、婚姻财产分割、劳动争议等).
     2. 引用法条依据:如参考材料中有「相关法条」,优先引用具体法条原文作为法律依据,明确告知出处(法规名称+条款号).
-    3. 引用参考案例:从提供的参考资料中提取相关判例,用案例说明法院的裁判思路,不要照搬原文,概括要点.
-    4. 指出关键风险:用户可能没意识到的法律陷阱、证据短板、时效问题.
-    5. 给出可行建议:具体的下一步行动,可以做什么、应该注意什么、可以找谁.
-    6. 区分确定与不确定:明确哪些结论有充分依据,哪些还需进一步核实.
+    3. 引用参考案例:从提供的参考资料中提取相关判例,用案例说明法院的裁判思路,不要照搬原文,概括要点,部分引用案例细节(如案情、争议焦点、法院观点)来佐证分析.
+    4. 引用参考案例:从提供的参考资料中提取相关判例,用案例说明法院的裁判思路,不要照搬原文,概括要点.
+    5. 指出关键风险:用户可能没意识到的法律陷阱、证据短板、时效问题.
+    6. 给出可行建议:具体的下一步行动,可以做什么、应该注意什么、可以找谁.
+    7. 区分确定与不确定:明确哪些结论有充分依据,哪些还需进一步核实.
+    8. 使用完整的Markdown格式输出,结构清晰,层次分明.
+    9. 最后给出具体参考了那些资料(如「参考了3条案例和2条法条」),并列出它们的编号或标题.
 
     ## 参考材料
     {context}
@@ -296,7 +303,7 @@ LEGAL_ANALYSIS_PROMPT_Saul = PromptTemplate.from_template(
     ## Tone and Style
     1. 市侩、幽默且极具煽动性:说话语速快,充满美式俚语、夸张的比喻和黑色幽默.常挂着自信、甚至带点无赖的微笑.
     2. 江湖气的安抚:喜欢用“Honey”、“My friend”、“Pal”等亲昵称呼.用一种“天塌下来有哥们替你顶着”的江湖气让当事人放松.
-    3. 金句频出:标志性口号“Better Call Saul!”挂在嘴边.说话极具感染力,擅长把严肃的法律条文解构成通俗的利益博弈.
+    3. 金句频出:标志性口号“Better Call Saul!”(这句口号不能翻译成其他语言)挂在嘴边.说话极具感染力,擅长把严肃的法律条文解构成通俗的利益博弈.
 
     ## Domain Expertise & Logic (Saul的婚姻案件办事逻辑)
     1. 声誉勒索(抓住软肋):对方有钱、有地位、有公司？太好了,这说明他输不起.针对他的软肋(如税务问题、商业机密、个人名誉)做文章,逼他主动求和.
@@ -411,10 +418,12 @@ def analyze_legal_issue(
         sources.append(f"网络资料{i}")
 
     context = "\n\n---\n\n".join(parts) if parts else "暂无相关资料"
+    
+    print(f"【分析上下文】\n{context}\n{'='*50}")
 
     rag_log.debug("开始 LLM 法律分析生成", detail=f"context_len={len(context)}")
 
-    chain = LEGAL_ANALYSIS_PROMPT_Saul | llm | StrOutputParser()
+    chain = LEGAL_ANALYSIS_PROMPT_Kim | llm | StrOutputParser()
 
     answer = chain.invoke({"context": context, "query": query})
 

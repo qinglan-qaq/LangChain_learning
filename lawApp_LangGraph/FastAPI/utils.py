@@ -39,8 +39,14 @@ def build_sources(state: dict) -> list[SourceInfo]:
             seen.add(key)
             sources.append(SourceInfo(case_number=cn, year=yr, snippet=txt[:200]))
 
-    for item in state.get("web_search_results", []) or []:
-        sources.append(SourceInfo(snippet=str(item)[:200]))
+    for item in state.get("web_search_snippets", []) or []:
+        sources.append(
+            SourceInfo(
+                title=item.get("title", ""),
+                link=item.get("link", ""),
+                snippet=item.get("snippet", ""),
+            )
+        )
 
     return sources
 

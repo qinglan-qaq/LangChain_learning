@@ -114,8 +114,12 @@ class AgentState(BaseModel):
     # 评估结果
     evaluation: EvaluationResult = Field(default_factory=EvaluationResult)
 
-    # 网络检索结果
+    # 网络检索结果（格式化文本，供分析节点拼装上下文）
     web_search_results: List[str] = Field(default_factory=list)
+    # 网络检索结构化摘要（供前端展示 source 信息）
+    web_search_snippets: List[Dict[str, Any]] = Field(default_factory=list)
+    # 网络检索元信息
+    web_search_metadata: Optional[Dict[str, Any]] = None
 
     # 拼装后的 CRAG 上下文
     crag_context: str = ""

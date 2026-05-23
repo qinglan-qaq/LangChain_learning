@@ -105,12 +105,12 @@ async def ask(request: QueryRequest):
 
 
 # SSE 流式询问接口
-@app.post("/ask/stream")
-async def ask_stream(request: QueryRequest):
+@app.get("/ask/stream")
+async def ask_stream(query: str, session_id: str | None = None):
     """SSE 流式问答: 实时推送规划、工具调用进度和最终回答."""
-    sid = ensure_session(request.session_id)
+    sid = ensure_session(session_id)
     set_session(sid)
-    query_preview = request.query[:80].replace("\n", " ")
+    query_preview = query[:80].replace("\n", " ")
     flow.info("流式流程开始", summary="用户提问", detail=f"query={query_preview}")
 
     config = {"configurable": {"thread_id": sid}}
@@ -120,7 +120,7 @@ async def ask_stream(request: QueryRequest):
         try:
             prev_step_idx = -1
             async for chunk in graph.astream(
-                {"query": request.query}, config=config, stream_mode="values"
+                {"query": query}, config=config, stream_mode="values"
             ):
                 plan = chunk.get("plan", []) or []
                 step_idx = chunk.get("current_step_index", 0)
@@ -214,7 +214,7 @@ async def home():
         "version": "2.0.0",
         "endpoints": {
             "ask": "POST /ask",
-            "ask_stream": "POST /ask/stream",
+            "ask_stream": "GET /ask/stream?query=xxx&session_id=xxx",
             "ask_pdf": "POST /ask/pdf",
             "tools": "GET /tools",
             "home": "GET /home",

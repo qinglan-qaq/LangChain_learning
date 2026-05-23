@@ -6,6 +6,7 @@ Agent 工具集 — 网络搜索与 PDF 生成
     fetch_webpage_text  — 抓取指定 URL 的网页正文文本
     markdown_to_pdf     — Markdown 转 PDF 文件
 """
+
 import os
 import time
 from datetime import datetime
@@ -47,27 +48,25 @@ def get_google_search(query: str) -> dict:
     raw = search.results(query)
 
     structured = []
-    snippets = []
     for res in raw.get("organic_results", [])[:8]:
         structured.append(
             {
                 "title": res.get("title", ""),
                 "link": res.get("link", ""),
-                "snippet": res.get("snippet", ""),
-                "source": res.get("source", ""),
+                "snippet": res.get("snippet", "")
             }
         )
-        snippets.append(
-            f"[{res.get('title', '')}] {res.get('snippet', '')} ({res.get('link', '')})"
-        )
-
     if not structured:
         tool_log.info(
             "← 工具返回: get_google_search",
             detail="未找到搜索结果",
             result=f"elapsed={time.time() - t0:.2f}s",
         )
-        return {"status": "empty", "message": "未找到相关搜索结果", "results": [], "web_search_results": []}
+        return {
+            "status": "empty",
+            "message": "未找到相关搜索结果",
+            "web_search_results": [],
+        }
 
     tool_log.info(
         "← 工具返回: get_google_search",
@@ -77,11 +76,12 @@ def get_google_search(query: str) -> dict:
     return {
         "status": "success",
         "count": len(structured),
-        "results": structured,
-        "web_search_results": snippets,
+        "web_search_results": structured
     }
 
+
 # Tool 2: Markdown → PDF
+
 
 def markdown_to_html(markdown_text: str) -> str:
     """将Markdown文本转换为HTML字符串,并启用表格等扩展功能"""
@@ -153,5 +153,3 @@ def markdown_to_pdf(markdown_text: str, filename: str = None) -> dict:
         result=f"elapsed={time.time() - t0:.2f}s",
     )
     return {"pdf_path": file_path, "is_pdf_output": True}
-
-
