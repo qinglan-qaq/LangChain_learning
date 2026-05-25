@@ -75,6 +75,7 @@ _STATE_KEYS = {
     "rag_documents",
     "evaluation",
     "final_answer",
+    "final_prompts",
     "crag_context",
     "web_search_results",
     "web_search_snippets",

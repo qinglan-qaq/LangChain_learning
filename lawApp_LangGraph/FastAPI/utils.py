@@ -9,14 +9,16 @@ from lawApp_LangGraph.FastAPI.model import QueryResponse, SourceInfo
 
 # 获取确保会话 ID
 def ensure_session(session_id: Optional[str]) -> str:
-    return session_id or uuid.uuid4().hex
+    if not session_id or not session_id.strip():
+        return uuid.uuid4().hex
+    return session_id
 
 # 调用 LangGraph
 async def invoke_graph(query: str, session_id: str) -> dict:
     config = {"configurable": {"thread_id": session_id}}
     return await graph.ainvoke({"query": query}, config=config)
 
-
+# 参考资料来源构建工具
 def build_sources(state: dict) -> list[SourceInfo]:
     sources: list[SourceInfo] = []
     seen: set[str] = set()
@@ -53,7 +55,6 @@ def build_sources(state: dict) -> list[SourceInfo]:
                 snippet=snippet,
             )
         )
-
     return sources
 
 
@@ -73,6 +74,7 @@ def build_response(state: dict, session_id: str) -> QueryResponse:
         query=state.get("query", ""),
         session_id=session_id,
         final_answer=state.get("final_answer", ""),
+        final_prompt=state.get("final_prompts", ""),
         sources=build_sources(state),
         tool_calls=build_tool_calls(state),
         reasoning=state.get("reasoning", []) or [],

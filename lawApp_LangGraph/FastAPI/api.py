@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 import uvicorn
-
 from lawApp_LangGraph.LangGraph_lawApp import graph
 from lawApp_LangGraph.tools import ALL_TOOLS
 from lawApp_LangGraph.FastAPI.model import (
@@ -93,6 +92,7 @@ async def ask(request: QueryRequest):
         raise HTTPException(status_code=500, detail=f"Graph 执行失败: {e}")
 
     elapsed = time.time() - t0
+    # 构建响应结果
     response = build_response(state, sid)
     tool_names = response.tool_calls or []
     flow.info(
@@ -119,11 +119,14 @@ async def ask_stream(query: str = "", session_id: str | None = None):
     async def event_stream():
         try:
             prev_step_idx = -1
+            chunk: dict = {}
             async for chunk in graph.astream(
                 {"query": query}, config=config, stream_mode="values"
             ):
+                
                 plan = chunk.get("plan", []) or []
                 step_idx = chunk.get("current_step_index", 0)
+                # 当前步骤结果: 检测步骤状态变化 → 推送工具调用结果
                 if step_idx != prev_step_idx and step_idx < len(plan):
                     prev_step_idx = step_idx
                     step = plan[step_idx]
@@ -140,10 +143,40 @@ async def ask_stream(query: str = "", session_id: str | None = None):
                     yield sse_event("progress", desc)
                     if tn:
                         yield sse_event("tool_call", tn)
+                    # 步骤状态 (当前步骤已完成)
+                    status = (
+                        step.get("status", "")
+                        if isinstance(step, dict)
+                        else getattr(step, "status", "")
+                    )
+                    if status in ("done", "failed"):
+                        yield sse_event("tool_result", f"{tn}:{status}")
 
+            # Graph 执行完毕,从最终 state (chunk) 依次推送结果
             answer = chunk.get("final_answer", "")
             yield sse_event("answer", answer)
             yield sse_event("session_id", sid)
+
+            # 推送结构化引用记录 PromptsRecord
+            prompts_record = chunk.get("prompts_record")
+            if prompts_record:
+                record_data = (
+                    prompts_record.model_dump()
+                    if hasattr(prompts_record, "model_dump")
+                    else prompts_record
+                    if isinstance(prompts_record, dict)
+                    else {}
+                )
+                yield sse_event(
+                    "prompts_record",
+                    json.dumps(record_data, ensure_ascii=False),
+                )
+
+            # 推送最终提示词
+            final_prompts = chunk.get("final_prompts", "")
+            if final_prompts:
+                yield sse_event("final_prompts", final_prompts)
+
             yield sse_event("done")
             flow.info(
                 "流式流程结束",

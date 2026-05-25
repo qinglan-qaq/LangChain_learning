@@ -37,6 +37,7 @@ class QueryResponse(BaseModel):
     query: str
     session_id: str
     final_answer: str
+    final_prompt: str = ""
     sources: List[SourceInfo] = Field(default_factory=list)
     tool_calls: List[str] = Field(default_factory=list)
     reasoning: List[str] = Field(default_factory=list)
