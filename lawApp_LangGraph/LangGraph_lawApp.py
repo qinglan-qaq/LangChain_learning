@@ -70,7 +70,15 @@ TOOL_BY_NAME: Dict[str, Any] = {t.name: t for t in ALL_TOOLS}
 
 #  工具 → AgentState 字段合并
 # 工具返回 dict 中与 AgentState 同名的 key 将被自动合并
-# web_search_results 特殊处理:追加而非覆盖
+
+
+def _field(item, key: str, default: str = ""):
+    """从 dict 或 Pydantic 对象中安全提取字段值."""
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
 _STATE_KEYS = {
     "rag_documents",
     "evaluation",
@@ -309,7 +317,7 @@ def executor_node(state: AgentState) -> dict:
         rag_summary = "暂无"
         if state.rag_documents:
             rag_summary = " | ".join(
-                f"[{d.rerank_score:.2f}] {d.chunk_text[:100]}..."
+                f"[{d.hybrid_score:.2f}] {d.chunk_text[:100]}..."
                 for d in state.rag_documents[:3]
             )
         # 评估结果摘要
@@ -379,7 +387,7 @@ def executor_node(state: AgentState) -> dict:
         ToolCallRecord(
             step_id=step.step_id,
             tool_name=step.tool_name,
-            input={"query": state.query},
+            tool_input={"query": state.query},
             output=tool_output,
         )
     )
@@ -393,49 +401,50 @@ def executor_node(state: AgentState) -> dict:
     tool_result_summary = ""
     if isinstance(tool_output, dict):
         for k, v in tool_output.items():
-            if k in _STATE_KEYS:
-                if k == "web_search_results":
-                    # 工具返回 WebSearchResult 列表,格式化为 List[str] 存入 state
-                    formatted: list[str] = []
-                    raw_snippets: list = []
-                    for item in v:
-                        if isinstance(item, str):
-                            formatted.append(item)
-                        else:
-                            title = getattr(item, "title", "") or (item.get("title", "") if isinstance(item, dict) else "")
-                            link = getattr(item, "link", "") or (item.get("link", "") if isinstance(item, dict) else "")
-                            snippet = getattr(item, "snippet", "") or (item.get("snippet", "") if isinstance(item, dict) else "")
-                            formatted.append(
-                                f"[搜索结果 | {title} | {link}]\n{snippet}"
-                            )
-                            raw_snippets.append(item)
-                    state_updates[k] = list(state.web_search_results) + formatted
-                    # 同时保存结构化摘要供前端展示
-                    existing_snippets = getattr(state, "web_search_snippets", []) or []
-                    state_updates["web_search_snippets"] = existing_snippets + raw_snippets
-                    tool_result_summary = f"web_results={len(v)}条"
-                elif k == "rag_documents":
-                    state_updates[k] = v
-                    tool_result_summary = f"rag_docs={len(v)}条"
-                elif k == "final_answer":
-                    state_updates[k] = v
-                    tool_result_summary = f"answer_len={len(v)}"
-                elif k == "evaluation":
-                    state_updates[k] = v
-                    verdict = (
-                        v.get("quality_verdict", "")
-                        if isinstance(v, dict)
-                        else getattr(v, "quality_verdict", "")
-                    )
-                    tool_result_summary = f"verdict={verdict}"
-                elif k == "law_results":
-                    state_updates[k] = list(state.law_results) + v
-                    tool_result_summary = f"law_results={len(v)}条"
-                elif k == "prompts_record":
-                    state_updates[k] = v
-                    tool_result_summary = "prompts_record已更新"
-                else:
-                    state_updates[k] = v
+            if k not in _STATE_KEYS:
+                continue
+
+            if k == "web_search_results":
+                # WebSearchResult 列表 → 格式化 str (LLM上下文) 
+                formatted: list[str] = []
+                raw_snippets: list = []
+                for item in v:
+                    if isinstance(item, str):
+                        formatted.append(item)
+                        continue
+                    title = _field(item, "title")
+                    link = _field(item, "link")
+                    snippet = _field(item, "snippet")
+                    formatted.append(f"[搜索结果 | {title} | {link}]\n{snippet}")
+                    raw_snippets.append(item)
+                state_updates[k] = list(state.web_search_results) + formatted
+                existing = getattr(state, "web_search_snippets", []) or []
+                state_updates["web_search_snippets"] = existing + raw_snippets
+                tool_result_summary = f"web_results={len(v)}条"
+
+            elif k == "law_results":
+                # LawsResult 列表 → 累加到 state
+                state_updates[k] = list(state.law_results) + v
+                tool_result_summary = f"law_results={len(v)}条"
+
+            elif k == "rag_documents":
+                state_updates[k] = v
+                tool_result_summary = f"rag_docs={len(v)}条"
+
+            elif k == "final_answer":
+                state_updates[k] = v
+                tool_result_summary = f"answer_len={len(v)}"
+
+            elif k == "evaluation":
+                state_updates[k] = v
+                tool_result_summary = f"verdict={_field(v, 'quality_verdict')}"
+
+            elif k == "prompts_record":
+                state_updates[k] = v
+                tool_result_summary = "prompts_record已更新"
+
+            else:
+                state_updates[k] = v
 
     step.status = "failed" if error_msg else "done"
     state_updates["current_step_index"] = idx + 1
@@ -720,6 +729,7 @@ def finalize_node(state: AgentState) -> dict:
     t0 = time.time()
     debug.debug("→ 进入 Finalize 节点", detail="组装最终回答...")
 
+    # 路径 A: 已有 final_answer 直接返回
     if state.final_answer:
         debug.info(
             "← Finalize 完成 (已有答案)",
@@ -728,6 +738,7 @@ def finalize_node(state: AgentState) -> dict:
         )
         return {}
 
+    # 路径 B: 没有 final_answer 但有 RAG 案例,用案例生成简要回答
     if state.rag_documents:
         debug.debug(
             "Finalize 兜底生成", detail=f"使用{len(state.rag_documents[:3])}条案例"
@@ -739,14 +750,25 @@ def finalize_node(state: AgentState) -> dict:
         chain = prompt | llm_executor | StrOutputParser()
         answer = chain.invoke({"docs": docs, "query": state.query})
         debug.info(
-            "← Finalize 完成 (兜底)",
+            "← Finalize 完成 (案例兜底)",
             detail=f"answer_len={len(answer)}",
             result=f"elapsed={time.time() - t0:.2f}s",
         )
         return {"final_answer": answer}
 
-    debug.info("← Finalize 完成", detail="无可用数据", result="返回默认欢迎语")
-    return {"final_answer": "您好！请问有什么法律问题需要咨询？"}
+    # 无参考资料时仍用 LLM 直接回答,而非硬编码欢迎语
+    debug.debug("Finalize 无参考资料,LLM 直接回答", detail=f"query={state.query[:60]}")
+    prompt = PromptTemplate.from_template(
+        "你是经验丰富的法律AI助手,七成理智,二成细腻,一成傲娇,请根据你的知识回答用户问题.\n问题: {query}\n回答:"
+    )
+    chain = prompt | llm_executor | StrOutputParser()
+    answer = chain.invoke({"query": state.query})
+    debug.info(
+        "← Finalize 完成 (LLM直接回答)",
+        detail=f"answer_len={len(answer)}",
+        result=f"elapsed={time.time() - t0:.2f}s",
+    )
+    return {"final_answer": answer}
 
 
 # 条件路由函数 (Conditional Edges)
