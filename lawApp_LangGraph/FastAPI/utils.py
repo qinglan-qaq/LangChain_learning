@@ -1,24 +1,53 @@
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import json
 import uuid
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-from lawApp_LangGraph.LangGraph_lawApp import graph
+if TYPE_CHECKING:
+    from lawApp_LangGraph.LangGraph_lawApp import graph
+
 from lawApp_LangGraph.FastAPI.model import QueryResponse, SourceInfo
 
-# 获取确保会话 ID
+# ── Stream Queue (context var 穿透 LangGraph 节点 & 工具) ──
+
+_stream_queue: contextvars.ContextVar[asyncio.Queue | None] = contextvars.ContextVar(
+    "stream_queue", default=None
+)
+
+
+def set_stream_queue(q: asyncio.Queue | None) -> None:
+    _stream_queue.set(q)
+
+
+def get_stream_queue() -> asyncio.Queue | None:
+    return _stream_queue.get(None)
+
+
+# ── 工具函数 ──
+
+
 def ensure_session(session_id: Optional[str]) -> str:
     if not session_id or not session_id.strip():
         return uuid.uuid4().hex
     return session_id
 
-# 调用 LangGraph
+
 async def invoke_graph(query: str, session_id: str) -> dict:
+    from lawApp_LangGraph.LangGraph_lawApp import graph
+
     config = {"configurable": {"thread_id": session_id}}
     return await graph.ainvoke({"query": query}, config=config)
 
-# 参考资料来源构建工具
+
+def _field(item, key: str, default: str = ""):
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
 def build_sources(state: dict) -> list[SourceInfo]:
     sources: list[SourceInfo] = []
     seen: set[str] = set()
@@ -41,20 +70,18 @@ def build_sources(state: dict) -> list[SourceInfo]:
             seen.add(key)
             sources.append(SourceInfo(case_number=cn, year=yr, snippet=txt[:200]))
 
-    for item in state.get("web_search_snippets", []) or []:
+    for item in state.get("web_search_results", []) or []:
         if isinstance(item, dict):
-            title, link, snippet = item.get("title", ""), item.get("link", ""), item.get("snippet", "")
+            title, link, snippet = (
+                item.get("title", ""),
+                item.get("link", ""),
+                item.get("snippet", ""),
+            )
         else:
             title = getattr(item, "title", "")
             link = getattr(item, "link", "")
             snippet = getattr(item, "snippet", "")
-        sources.append(
-            SourceInfo(
-                title=title,
-                link=link,
-                snippet=snippet,
-            )
-        )
+        sources.append(SourceInfo(title=title, link=link, snippet=snippet))
     return sources
 
 
@@ -82,4 +109,6 @@ def build_response(state: dict, session_id: str) -> QueryResponse:
 
 
 def sse_event(event: str, data: str = "") -> str:
-    return f"data: {json.dumps({'event': event, 'data': data}, ensure_ascii=False)}\n\n"
+    return (
+        f"data: {json.dumps({'event': event, 'data': data}, ensure_ascii=False)}\n\n"
+    )

@@ -142,6 +142,8 @@ class AgentState(BaseModel):
     replan_needed: bool = False
     replan_reason: Optional[str] = None
 
+    # =============Agent显式输出结果=============
+
     # 最终回答结果
     final_answer: str = ""
 
@@ -157,11 +159,16 @@ class AgentState(BaseModel):
     #  思考链(Chain of Thought)
     reasoning: List[str] = Field(default_factory=list)
 
+    # =============以下为工具返回结果==============
+
     # RAG检索结果
     rag_documents: List[RetrievedDocument] = Field(default_factory=list)
 
     # 评估结果
     evaluation: EvaluationResult = Field(default_factory=EvaluationResult)
+
+    # 网络检索结果
+    web_search_results: List[WebSearchResult] = Field(default_factory=list)
 
     # 拼装后的 CRAG 上下文
     crag_context: EvaluationResult = Field(default_factory=EvaluationResult)
@@ -169,11 +176,13 @@ class AgentState(BaseModel):
     # 长期记忆检索结果
     memory_results: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # 法律条文检索结果 (fetch_laws 工具输出)
+    # 法律条文检索结果
     law_results: List[LawsResult] = Field(default_factory=list)
 
     # 长期记忆写入确认
     memory_update: Optional[Dict[str, Any]] = None
+
+    # =============以下为路由控制判断=============
 
     # CRAG 管线兼容字段(LangGraph 路由用)
     is_law_questions: bool = False

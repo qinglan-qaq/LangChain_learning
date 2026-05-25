@@ -29,6 +29,7 @@ from lawApp_LangGraph.state import (
     simpleRetrievedDocument,
     PromptsRecord,
 )
+from lawApp_LangGraph.FastAPI.utils import get_stream_queue
 from langsmith import traceable
 
 
@@ -104,8 +105,8 @@ def retrieve_legal_knowledge(
 
     参数:
     query: 法律问题查询语句,中文
-    top_k: 初始召回数量,默认 20
-    rerank_top_n: 重排序后返回数量,默认 5 (从 top_k 中选出最相关的 5 条)
+    top_k: 初始召回数量,最多不超过 20
+    rerank_top_n: 重排序后返回数量,最多不超过 10 (从 top_k 中选出最相关的 10 条)
     alpha: 混合检索中的权重参数,默认 0.4 (越接近 1 越重视语义匹配,越接近 0 越重视关键词匹配)
     namespace: 检索的命名空间,默认 "law_cases"
     返回:
@@ -224,7 +225,7 @@ def evaluate_case_relevance(
     correct, ambiguous, incorrect = [], [], []
 
     for doc in documents:
-        score = doc.get("rerank_score")
+        score = doc.get("hybrid_score")
         sdoc = simpleRetrievedDocument(
             id=doc.get("id", ""),
             year=str(doc.get("year", "")),
@@ -379,7 +380,7 @@ def _to_simple_doc(doc) -> simpleRetrievedDocument:
 
 @tool
 @traceable(run_type="tool", name="tool_法律问题分析")
-def analyze_legal_issue(
+async def analyze_legal_issue(
     query: str,
     correct_cases: Optional[list[dict[str, Any]]] = None,
     ambiguous_cases: Optional[list[dict[str, Any]]] = None,
@@ -497,8 +498,18 @@ def analyze_legal_issue(
     rag_log.debug("开始 LLM 法律分析生成", detail=f"context_len={len(context)}")
 
     final_prompt = LEGAL_ANALYSIS_PROMPT_Kim.format(context=context, query=query)
-    response = llm.invoke(final_prompt)
-    answer = response.content if hasattr(response, "content") else str(response)
+
+    # 流式生成:逐 token 推送到 SSE 队列
+    queue = get_stream_queue()
+    if queue:
+        await queue.put(("status", "正在生成法律分析..."))
+    answer_parts: list[str] = []
+    async for chunk in llm.astream(final_prompt):
+        content = chunk.content if hasattr(chunk, "content") else str(chunk)
+        answer_parts.append(content)
+        if queue:
+            await queue.put(("token", content))
+    answer = "".join(answer_parts)
 
     elapsed = time.time() - t0
 

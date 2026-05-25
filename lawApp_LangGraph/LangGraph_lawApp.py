@@ -31,6 +31,7 @@ from langgraph.graph import END, START, StateGraph
 from lawApp_LangGraph.state import AgentState, PlanStep, ToolCallRecord
 from lawApp_LangGraph.tools import ALL_TOOLS
 from lawApp_LangGraph.FastAPI.logging import debug, flow, tool as tool_log
+from lawApp_LangGraph.FastAPI.utils import get_stream_queue
 from langsmith import traceable
 
 load_dotenv()
@@ -86,8 +87,6 @@ _STATE_KEYS = {
     "final_prompts",
     "crag_context",
     "web_search_results",
-    "web_search_snippets",
-    "web_search_metadata",
     "pdf_path",
     "is_pdf_output",
     "memory_results",
@@ -165,8 +164,8 @@ PLANNER_SYSTEM = """
 
 
 @traceable(run_type="chain", name="Planner_计划节点")
-def planner_node(state: AgentState) -> dict:
-    """Pro LLM: 分析问题 → JSON 计划 + 思考链"""
+async def planner_node(state: AgentState) -> dict:
+    """Pro LLM: 分析问题 → JSON 计划 + 思考链 (流式输出 reasoning token)"""
     t0 = time.time()
     query = state.query.strip()
     debug.debug("→ 进入 Planner 节点", detail=f"query={query[:80]}")
@@ -181,11 +180,19 @@ def planner_node(state: AgentState) -> dict:
 
     tools_desc = "\n".join(f"- {t.name}: {t.description[:120]}" for t in ALL_TOOLS)
 
-    # 链式执行生成计划与思考链
+    # 链式执行,流式推送 token 到 SSE 队列
     chain = (
         PromptTemplate.from_template(PLANNER_SYSTEM) | llm_planner | StrOutputParser()
     )
-    raw = chain.invoke({"query": query, "available_tools": tools_desc})
+    queue = get_stream_queue()
+    if queue:
+        await queue.put(("status", "正在分析问题，制定执行计划..."))
+    raw_parts: list[str] = []
+    async for chunk in chain.astream({"query": query, "available_tools": tools_desc}):
+        raw_parts.append(chunk)
+        if queue:
+            await queue.put(("reasoning_token", chunk))
+    raw = "".join(raw_parts)
 
     # 解析 llm返回结果,提取计划和思考链;解析失败则返回默认计划
     try:
@@ -278,12 +285,10 @@ EXECUTOR_PROMPT = """
 
 
 @traceable(run_type="chain", name="Executor_执行节点")
-def executor_node(state: AgentState) -> dict:
+async def executor_node(state: AgentState) -> dict:
     """Flash LLM: 调用指定工具,更新状态;失败则自动降级为直接参数映射"""
     t0 = time.time()
-    # 当前步骤数
     idx = state.current_step_index
-    # 规划节点列出的计划
     plan = state.plan
 
     if idx >= len(plan):
@@ -298,6 +303,11 @@ def executor_node(state: AgentState) -> dict:
         f"→ 进入 Executor 节点 [{idx + 1}/{total_steps}]",
         detail=f"tool_name={step.tool_name or '无'} | desc={step.description[:60]}",
     )
+
+    # 推送步骤进度到 SSE 队列
+    queue = get_stream_queue()
+    if queue:
+        await queue.put(("status", f"执行步骤 {idx + 1}/{total_steps}: {step.description}"))
 
     # 无工具步骤 → 跳过
     if not step.tool_name:
@@ -331,9 +341,13 @@ def executor_node(state: AgentState) -> dict:
         # 网络搜索摘要
         web_summary = "暂无"
         if state.web_search_results:
-            web_summary = (
-                state.web_search_results[-3] if state.web_search_results else "暂无"
-            )
+            recent = state.web_search_results[-3:]
+            parts = []
+            for item in recent:
+                title = _field(item, "title")
+                snippet = _field(item, "snippet")
+                parts.append(f"[{title}] {snippet[:80]}...")
+            web_summary = " | ".join(parts)
 
         prompt = EXECUTOR_PROMPT.format(
             step_description=step.description,
@@ -353,7 +367,7 @@ def executor_node(state: AgentState) -> dict:
         调用 llm_executor_with_tools.invoke() 
         让 Flash LLM 根据提示词分析当前步骤和上下文,自动提取参数并调用指定工具
         """
-        response = llm_executor_with_tools.invoke([SystemMessage(content=prompt)])
+        response = await llm_executor_with_tools.ainvoke([SystemMessage(content=prompt)])
 
         if isinstance(response, AIMessage) and response.tool_calls:
             for tc in response.tool_calls:
@@ -363,7 +377,7 @@ def executor_node(state: AgentState) -> dict:
                         "LLM 发起工具调用",
                         detail=f"tool={tc['name']} | args={str(tc.get('args', {}))[:200]}",
                     )
-                    tool_output = called.invoke(tc["args"])
+                    tool_output = await called.ainvoke(tc["args"])
                     break
         else:
             raise RuntimeError("Flash LLM 未发起工具调用")
@@ -377,7 +391,7 @@ def executor_node(state: AgentState) -> dict:
             args_fn = _TOOL_FALLBACK_ARGS.get(
                 step.tool_name, lambda s: {"query": s.query}
             )
-            tool_output = TOOL_BY_NAME[step.tool_name].invoke(args_fn(state))
+            tool_output = await TOOL_BY_NAME[step.tool_name].ainvoke(args_fn(state))
             debug.info("降级参数映射成功", detail=f"tool={step.tool_name}")
         except Exception as e2:
             error_msg = f"{e} | 降级: {e2}"
@@ -405,21 +419,7 @@ def executor_node(state: AgentState) -> dict:
                 continue
 
             if k == "web_search_results":
-                # WebSearchResult 列表 → 格式化 str (LLM上下文) 
-                formatted: list[str] = []
-                raw_snippets: list = []
-                for item in v:
-                    if isinstance(item, str):
-                        formatted.append(item)
-                        continue
-                    title = _field(item, "title")
-                    link = _field(item, "link")
-                    snippet = _field(item, "snippet")
-                    formatted.append(f"[搜索结果 | {title} | {link}]\n{snippet}")
-                    raw_snippets.append(item)
-                state_updates[k] = list(state.web_search_results) + formatted
-                existing = getattr(state, "web_search_snippets", []) or []
-                state_updates["web_search_snippets"] = existing + raw_snippets
+                state_updates[k] = list(state.web_search_results) + list(v)
                 tool_result_summary = f"web_results={len(v)}条"
 
             elif k == "law_results":
@@ -450,6 +450,10 @@ def executor_node(state: AgentState) -> dict:
     state_updates["current_step_index"] = idx + 1
     if error_msg:
         state_updates["error"] = error_msg
+
+    # 推送工具执行结果到 SSE 队列
+    if queue and tool_result_summary:
+        await queue.put(("tool_result", tool_result_summary))
 
     elapsed = time.time() - t0
     status = "失败" if error_msg else "完成"
@@ -724,10 +728,12 @@ def replanner_node(state: AgentState) -> dict:
 
 
 @traceable(run_type="chain", name="Finalize_最终组装节点")
-def finalize_node(state: AgentState) -> dict:
+async def finalize_node(state: AgentState) -> dict:
     """如果已有 final_answer 则直接使用；否则用已检索案例生成简要回答"""
     t0 = time.time()
     debug.debug("→ 进入 Finalize 节点", detail="组装最终回答...")
+
+    queue = get_stream_queue()
 
     # 路径 A: 已有 final_answer 直接返回
     if state.final_answer:
@@ -748,7 +754,14 @@ def finalize_node(state: AgentState) -> dict:
             "基于以下案例,简要回答用户问题.\n案例:\n{docs}\n\n问题: {query}\n\n法律建议:"
         )
         chain = prompt | llm_executor | StrOutputParser()
-        answer = chain.invoke({"docs": docs, "query": state.query})
+        if queue:
+            await queue.put(("status", "正在整理回答..."))
+        parts: list[str] = []
+        async for chunk in chain.astream({"docs": docs, "query": state.query}):
+            parts.append(chunk)
+            if queue:
+                await queue.put(("token", chunk))
+        answer = "".join(parts)
         debug.info(
             "← Finalize 完成 (案例兜底)",
             detail=f"answer_len={len(answer)}",
@@ -762,7 +775,14 @@ def finalize_node(state: AgentState) -> dict:
         "你是经验丰富的法律AI助手,七成理智,二成细腻,一成傲娇,请根据你的知识回答用户问题.\n问题: {query}\n回答:"
     )
     chain = prompt | llm_executor | StrOutputParser()
-    answer = chain.invoke({"query": state.query})
+    if queue:
+        await queue.put(("status", "正在生成回答..."))
+    parts: list[str] = []
+    async for chunk in chain.astream({"query": state.query}):
+        parts.append(chunk)
+        if queue:
+            await queue.put(("token", chunk))
+    answer = "".join(parts)
     debug.info(
         "← Finalize 完成 (LLM直接回答)",
         detail=f"answer_len={len(answer)}",

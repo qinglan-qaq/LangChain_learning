@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -19,6 +20,7 @@ from lawApp_LangGraph.FastAPI.utils import (
     build_response,
     ensure_session,
     invoke_graph,
+    set_stream_queue,
     sse_event,
 )
 from lawApp_LangGraph.FastAPI.logging import (
@@ -107,7 +109,7 @@ async def ask(request: QueryRequest):
 # SSE 流式询问接口
 @app.get("/ask/stream")
 async def ask_stream(query: str = "", session_id: str | None = None):
-    """SSE 流式问答: 实时推送规划、工具调用进度和最终回答."""
+    """SSE 流式问答: 实时推送 reasoning token、工具调用进度和 answer token (打字机效果)."""
     sid = ensure_session(session_id)
     set_session(sid)
     query_preview = query[:80].replace("\n", " ")
@@ -117,48 +119,83 @@ async def ask_stream(query: str = "", session_id: str | None = None):
     debug.debug("流式请求配置就绪", detail=f"thread_id={sid}")
 
     async def event_stream():
-        try:
-            prev_step_idx = -1
-            chunk: dict = {}
-            async for chunk in graph.astream(
-                {"query": query}, config=config, stream_mode="values"
-            ):
-                
-                plan = chunk.get("plan", []) or []
-                step_idx = chunk.get("current_step_index", 0)
-                # 当前步骤结果: 检测步骤状态变化 → 推送工具调用结果
-                if step_idx != prev_step_idx and step_idx < len(plan):
-                    prev_step_idx = step_idx
-                    step = plan[step_idx]
-                    desc = (
-                        step.get("description", "")
-                        if isinstance(step, dict)
-                        else getattr(step, "description", "")
-                    )
-                    tn = (
-                        step.get("tool_name", "")
-                        if isinstance(step, dict)
-                        else getattr(step, "tool_name", "")
-                    )
-                    yield sse_event("progress", desc)
-                    if tn:
-                        yield sse_event("tool_call", tn)
-                    # 步骤状态 (当前步骤已完成)
-                    status = (
-                        step.get("status", "")
-                        if isinstance(step, dict)
-                        else getattr(step, "status", "")
-                    )
-                    if status in ("done", "failed"):
-                        yield sse_event("tool_result", f"{tn}:{status}")
+        queue: asyncio.Queue = asyncio.Queue()
+        set_stream_queue(queue)
+        final_state: dict = {}
+        prev_step_idx = -1
 
-            # Graph 执行完毕,从最终 state (chunk) 依次推送结果
-            answer = chunk.get("final_answer", "")
+        # 后台任务: 运行 graph,将 state 快照推入队列
+        async def run_graph():
+            nonlocal final_state
+            try:
+                async for chunk in graph.astream(
+                    {"query": query}, config=config, stream_mode="values"
+                ):
+                    final_state = chunk
+                    await queue.put(("state", chunk))
+                await queue.put(("graph_done", {}))
+            except Exception as e:
+                await queue.put(("error", str(e)))
+
+        graph_task = asyncio.create_task(run_graph())
+
+        try:
+            while True:
+                event_type, data = await queue.get()
+
+                if event_type == "graph_done":
+                    break
+
+                if event_type == "error":
+                    yield sse_event("error", data)
+                    return
+
+                if event_type == "state":
+                    chunk = data
+                    plan = chunk.get("plan", []) or []
+                    step_idx = chunk.get("current_step_index", 0)
+                    if step_idx != prev_step_idx and step_idx < len(plan):
+                        prev_step_idx = step_idx
+                        step = plan[step_idx]
+                        desc = (
+                            step.get("description", "")
+                            if isinstance(step, dict)
+                            else getattr(step, "description", "")
+                        )
+                        tn = (
+                            step.get("tool_name", "")
+                            if isinstance(step, dict)
+                            else getattr(step, "tool_name", "")
+                        )
+                        yield sse_event("progress", desc)
+                        if tn:
+                            yield sse_event("tool_call", tn)
+                        status = (
+                            step.get("status", "")
+                            if isinstance(step, dict)
+                            else getattr(step, "status", "")
+                        )
+                        if status in ("done", "failed"):
+                            yield sse_event("tool_result", f"{tn}:{status}")
+
+                elif event_type == "token":
+                    yield sse_event("token", data)
+
+                elif event_type == "reasoning_token":
+                    yield sse_event("reasoning_token", data)
+
+                elif event_type == "status":
+                    yield sse_event("status", data)
+
+                elif event_type == "tool_result":
+                    yield sse_event("tool_result", data)
+
+            # Graph 执行完毕,依次推送最终结果
+            answer = final_state.get("final_answer", "")
             yield sse_event("answer", answer)
             yield sse_event("session_id", sid)
 
-            # 推送结构化引用记录 PromptsRecord
-            prompts_record = chunk.get("prompts_record")
+            prompts_record = final_state.get("prompts_record")
             if prompts_record:
                 record_data = (
                     prompts_record.model_dump()
@@ -172,8 +209,7 @@ async def ask_stream(query: str = "", session_id: str | None = None):
                     json.dumps(record_data, ensure_ascii=False),
                 )
 
-            # 推送最终提示词
-            final_prompts = chunk.get("final_prompts", "")
+            final_prompts = final_state.get("final_prompts", "")
             if final_prompts:
                 yield sse_event("final_prompts", final_prompts)
 
@@ -183,9 +219,10 @@ async def ask_stream(query: str = "", session_id: str | None = None):
                 summary="流式回答完成",
                 result=f"answer_len={len(answer)}",
             )
-        except Exception as e:
-            flow.error("流式流程异常", detail=str(e))
-            yield sse_event("error", str(e))
+        finally:
+            set_stream_queue(None)
+            if not graph_task.done():
+                graph_task.cancel()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
