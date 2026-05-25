@@ -164,7 +164,7 @@ class AgentState(BaseModel):
     evaluation: EvaluationResult = Field(default_factory=EvaluationResult)
 
     # 拼装后的 CRAG 上下文
-    crag_context: str = ""
+    crag_context: EvaluationResult = Field(default_factory=EvaluationResult)
 
     # 长期记忆检索结果
     memory_results: List[Dict[str, Any]] = Field(default_factory=list)

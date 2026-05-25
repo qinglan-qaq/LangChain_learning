@@ -84,6 +84,7 @@ def _get_llm():
 
 # Tool 1: 法律案例检索
 
+
 @tool
 @traceable(run_type="tool", name="tool_法律知识检索")
 def retrieve_legal_knowledge(
@@ -157,7 +158,7 @@ def retrieve_legal_knowledge(
         r["rank"] = i + 1
 
     top_score = results[0]["hybrid_score"] if results else 0
-    
+
     tool_log.info(
         "← 工具返回: retrieve_legal_knowledge",
         detail=f"返回{len(results)}条案例 | top_score={top_score:.3f}",
@@ -343,7 +344,11 @@ LEGAL_ANALYSIS_PROMPT_Saul = PromptTemplate.from_template(
 def _extract_doc_fields(doc) -> tuple:
     """从 dict 或 simpleRetrievedDocument 中提取案号、年份、文本."""
     if isinstance(doc, dict):
-        return doc.get("case_number", ""), str(doc.get("year", "")), doc.get("chunk_text", "")
+        return (
+            doc.get("case_number", ""),
+            str(doc.get("year", "")),
+            doc.get("chunk_text", ""),
+        )
     return (
         getattr(doc, "case_number", ""),
         str(getattr(doc, "year", "")),
@@ -399,7 +404,7 @@ def analyze_legal_issue(
     law_results: 相关法律条文列表(来自 fetch_laws 的 law_results 字段)
 
     返回:
-    结构化 dict,含 final_answer / crag_context / sources / prompts_record
+    结构化 dict,含 final_answer / final_prompt / prompts_record
     """
     t0 = time.time()
     correct_n = len(correct_cases or [])
@@ -418,78 +423,40 @@ def analyze_legal_issue(
     web_results = web_results or []
     law_results = law_results or []
 
-    parts = []
-    sources = []
+    # ── 构建 PromptsRecord 的三个类型化列表 ──
 
-    # 法律条文 (优先展示,作为权威依据)
     laws_for_record: list[LawsResult] = []
-    for i, law in enumerate(law_results, 1):
+    for law in law_results:
         if isinstance(law, dict):
-            title = law.get("law_title", "")
-            article_number = law.get("article_number", "")
-            content = law.get("content", "")
             laws_for_record.append(LawsResult(
-                law_title=title,
+                law_title=law.get("law_title", ""),
                 chapter=law.get("chapter", ""),
-                article_number=article_number,
-                content=content,
+                article_number=law.get("article_number", ""),
+                content=law.get("content", ""),
             ))
         else:
-            title = getattr(law, "law_title", "")
-            article_number = getattr(law, "article_number", "")
-            content = getattr(law, "content", "")
             laws_for_record.append(law)
-        parts.append(f"法条: {title} 第{article_number}条\n{content}")
-        sources.append(f"法条: {title} 第{article_number}条")
 
-    # 案例部分,按照质量分档展示,高质量的案例会被 LLM 优先关注
     eval_docs_for_record: list[simpleRetrievedDocument] = []
     for doc in correct_cases:
         if doc:
-            cn, yr, chunk_text = _extract_doc_fields(doc)
-            parts.append(
-                f"[高相关案例 | 案号:{cn} | {yr}年]\n{chunk_text}"
-            )
-            if cn:
-                sources.append(f"案例: {cn} ({yr})")
             eval_docs_for_record.append(_to_simple_doc(doc))
-    # 中等相关的案例也可以参考,但要明确标注质量较低
     for doc in ambiguous_cases:
         if doc:
-            cn, yr, chunk_text = _extract_doc_fields(doc)
-            parts.append(
-                f"[中等相关案例 | 案号:{cn} | {yr}年]\n{chunk_text}"
-            )
-            if cn:
-                sources.append(f"案例: {cn} ({yr})")
             eval_docs_for_record.append(_to_simple_doc(doc))
 
     web_for_record: list[WebSearchResult] = []
-    for i, snippet in enumerate(web_results, 1):
+    for snippet in web_results:
         if isinstance(snippet, str):
-            content = snippet
+            pass  # 纯文本不转为 WebSearchResult,跳过
         elif isinstance(snippet, dict):
-            content = snippet.get("snippet", snippet.get("content", str(snippet)))
             web_for_record.append(WebSearchResult(
                 title=snippet.get("title", ""),
                 link=snippet.get("link", ""),
                 snippet=snippet.get("snippet", ""),
             ))
         else:
-            content = getattr(snippet, "snippet", "") or getattr(snippet, "content", str(snippet))
             web_for_record.append(snippet)
-        parts.append(f"[外部网络资料{i}]\n{content}")
-        sources.append(f"网络资料{i}")
-
-    context = "\n\n---\n\n".join(parts) if parts else "暂无相关资料"
-
-    print(f"【分析上下文】\n{context}\n{'='*50}")
-
-    rag_log.debug("开始 LLM 法律分析生成", detail=f"context_len={len(context)}")
-
-    final_prompt = LEGAL_ANALYSIS_PROMPT_Kim.format(context=context, query=query)
-    response = llm.invoke(final_prompt)
-    answer = response.content if hasattr(response, "content") else str(response)
 
     prompts_record = PromptsRecord(
         query=query,
@@ -498,17 +465,51 @@ def analyze_legal_issue(
         laws_results=laws_for_record,
     )
 
+    # ── 从 PromptsRecord 各字段拼装 context → 注入模板 → final_prompt ──
+
+    context_lines: list[str] = []
+
+    for law in prompts_record.laws_results:
+        context_lines.append(
+            f"法条: {law.law_title} 第{law.article_number}条\n{law.content}"
+        )
+
+    for doc in correct_cases:
+        if doc:
+            cn, yr, chunk_text = _extract_doc_fields(doc)
+            context_lines.append(f"[高相关案例 | 案号:{cn} | {yr}年]\n{chunk_text}")
+    for doc in ambiguous_cases:
+        if doc:
+            cn, yr, chunk_text = _extract_doc_fields(doc)
+            context_lines.append(f"[中等相关案例 | 案号:{cn} | {yr}年]\n{chunk_text}")
+
+    for i, snippet in enumerate(web_results, 1):
+        if isinstance(snippet, str):
+            content = snippet
+        elif isinstance(snippet, dict):
+            content = snippet.get("snippet", snippet.get("content", str(snippet)))
+        else:
+            content = getattr(snippet, "snippet", "") or getattr(snippet, "content", str(snippet))
+        context_lines.append(f"[外部网络资料{i}]\n{content}")
+
+    context = "\n\n---\n\n".join(context_lines) if context_lines else "暂无相关资料"
+
+    rag_log.debug("开始 LLM 法律分析生成", detail=f"context_len={len(context)}")
+
+    final_prompt = LEGAL_ANALYSIS_PROMPT_Kim.format(context=context, query=query)
+    response = llm.invoke(final_prompt)
+    answer = response.content if hasattr(response, "content") else str(response)
+
     elapsed = time.time() - t0
 
     tool_log.info(
         "← 工具返回: analyze_legal_issue",
-        detail=f"context_len={len(context)} | sources={len(sources)}",
+        detail=f"laws={len(prompts_record.laws_results)} | cases={len(prompts_record.evluate_retrieved_documents)} | web={len(prompts_record.web_search_results)}",
         result=f"answer_len={len(answer)} | elapsed={elapsed:.2f}s",
     )
 
     return {
         "final_answer": answer,
-        "crag_context": context,
-        "sources": sources,
+        "final_prompts": final_prompt,
         "prompts_record": prompts_record,
     }
