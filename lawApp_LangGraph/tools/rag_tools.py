@@ -507,7 +507,7 @@ async def analyze_legal_issue(
     async for chunk in llm.astream(final_prompt):
         content = chunk.content if hasattr(chunk, "content") else str(chunk)
         answer_parts.append(content)
-        if queue:
+        if queue and content.strip():
             await queue.put(("token", content))
     answer = "".join(answer_parts)
 

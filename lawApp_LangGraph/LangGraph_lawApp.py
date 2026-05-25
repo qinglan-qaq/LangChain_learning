@@ -127,6 +127,15 @@ _TOOL_FALLBACK_ARGS = {
         "query": s.query,
         "top_k": 5,
     },
+    "search_memory": lambda s: {
+        "query": s.query,
+        "top_k": 3,
+    },
+    "save_to_memory": lambda s: {
+        "content": s.final_answer or s.query,
+        "summary": s.query[:200],
+        "memory_type": "conclusion",
+    },
 }
 
 
@@ -190,7 +199,7 @@ async def planner_node(state: AgentState) -> dict:
     raw_parts: list[str] = []
     async for chunk in chain.astream({"query": query, "available_tools": tools_desc}):
         raw_parts.append(chunk)
-        if queue:
+        if queue and chunk.strip():
             await queue.put(("reasoning_token", chunk))
     raw = "".join(raw_parts)
 
@@ -527,18 +536,16 @@ def replan_check_node(state: AgentState) -> dict:
             f"高质量{ev.correct_count}, 中等{ev.ambiguous_count}, 低质量{ev.incorrect_count})"
         )
 
-    prompt = REPLAN_CHECK_PROMPT.format(
-        user_query=state.query,
-        executed_summary=executed_summary,
-        doc_count=len(state.rag_documents),
-        quality_verdict=quality_verdict,
-        web_count=len(state.web_search_results),
-        error_info=state.error or "无",
-    )
-
     try:
-        chain = PromptTemplate.from_template(prompt) | llm_executor | StrOutputParser()
-        raw = chain.invoke({})
+        chain = PromptTemplate.from_template(REPLAN_CHECK_PROMPT) | llm_executor | StrOutputParser()
+        raw = chain.invoke({
+            "user_query": state.query,
+            "executed_summary": executed_summary,
+            "doc_count": len(state.rag_documents),
+            "quality_verdict": quality_verdict,
+            "web_count": len(state.web_search_results),
+            "error_info": state.error or "无",
+        })
         raw = raw.strip()
 
         # 提取JSON部分,兼容 LLM 输出中夹带文本的情况
@@ -759,7 +766,7 @@ async def finalize_node(state: AgentState) -> dict:
         parts: list[str] = []
         async for chunk in chain.astream({"docs": docs, "query": state.query}):
             parts.append(chunk)
-            if queue:
+            if queue and chunk.strip():
                 await queue.put(("token", chunk))
         answer = "".join(parts)
         debug.info(
@@ -780,7 +787,7 @@ async def finalize_node(state: AgentState) -> dict:
     parts: list[str] = []
     async for chunk in chain.astream({"query": state.query}):
         parts.append(chunk)
-        if queue:
+        if queue and chunk.strip():
             await queue.put(("token", chunk))
     answer = "".join(parts)
     debug.info(

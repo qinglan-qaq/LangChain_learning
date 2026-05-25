@@ -5,12 +5,20 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
+
+import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-import uvicorn
-from lawApp_LangGraph.LangGraph_lawApp import graph
-from lawApp_LangGraph.tools import ALL_TOOLS
+
+from lawApp_LangGraph.FastAPI.logging import (
+    debug,
+    flow,
+    set_session,
+    setup_logging,
+    system,
+)
 from lawApp_LangGraph.FastAPI.model import (
     QueryRequest,
     QueryResponse,
@@ -23,16 +31,11 @@ from lawApp_LangGraph.FastAPI.utils import (
     set_stream_queue,
     sse_event,
 )
-from lawApp_LangGraph.FastAPI.logging import (
-    setup_logging,
-    set_session,
-    flow,
-    debug,
-    system,
-)
-from dotenv import load_dotenv
+from lawApp_LangGraph.LangGraph_lawApp import graph
+from lawApp_LangGraph.tools import ALL_TOOLS
 
 load_dotenv(dotenv_path="lawApp_LangGraph/.env")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -41,9 +44,12 @@ async def lifespan(app: FastAPI):
         console_level=os.getenv("LOG_CONSOLE_LEVEL", "DEBUG"),
         file_level=os.getenv("LOG_FILE_LEVEL", "INFO"),
     )
-    system.info("系统启动", detail=f"日志系统已初始化", result="Legal Consultation API v2.0.0")
+    system.info(
+        "系统启动", detail=f"日志系统已初始化", result="Legal Consultation API v2.0.0"
+    )
     yield
     system.info("系统关闭", detail="服务正在关闭")
+
 
 app = FastAPI(
     title="Legal Consultation API",
@@ -83,7 +89,7 @@ async def ask(request: QueryRequest):
     sid = ensure_session(request.session_id)
     set_session(sid)
     query_preview = request.query[:80].replace("\n", " ")
-    
+
     flow.info("流程开始", summary="用户提问", detail=f"query={query_preview}")
 
     t0 = time.time()
@@ -141,6 +147,7 @@ async def ask_stream(query: str = "", session_id: str | None = None):
 
         try:
             while True:
+                # 排队队列处理 Graph 事件
                 event_type, data = await queue.get()
 
                 if event_type == "graph_done":
@@ -151,6 +158,7 @@ async def ask_stream(query: str = "", session_id: str | None = None):
                     return
 
                 if event_type == "state":
+                    #流式输出当前的步骤描述和工具调用
                     chunk = data
                     plan = chunk.get("plan", []) or []
                     step_idx = chunk.get("current_step_index", 0)
@@ -179,10 +187,12 @@ async def ask_stream(query: str = "", session_id: str | None = None):
                             yield sse_event("tool_result", f"{tn}:{status}")
 
                 elif event_type == "token":
-                    yield sse_event("token", data)
+                    if data.strip():
+                        yield sse_event("token", data)
 
                 elif event_type == "reasoning_token":
-                    yield sse_event("reasoning_token", data)
+                    if data.strip():
+                        yield sse_event("reasoning_token", data)
 
                 elif event_type == "status":
                     yield sse_event("status", data)

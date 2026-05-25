@@ -270,3 +270,44 @@
 2026-05-25 18:21:03 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
 2026-05-25 18:21:03 | INFO  | -        | system               | 系统关闭 | 服务正在关闭 | 服务正在关闭
 2026-05-25 18:21:23 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-25 22:08:02 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-25 22:09:59 | INFO  | -        | system               | GET /docs | status=200 | elapsed=0.002s | status=200 | elapsed=0.002s
+2026-05-25 22:10:00 | INFO  | -        | system               | GET /openapi.json | status=200 | elapsed=0.036s | status=200 | elapsed=0.036s
+2026-05-25 22:10:21 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.009s | status=200 | elapsed=0.009s
+2026-05-25 22:10:53 | INFO  | cd434a38 | system               | 初始化 RAG_service (冷启动) | 首次加载嵌入模型 + 重排序模型 + BM25 编码器 | 首次加载嵌入模型 + 重排序模型 + BM25 编码器
+2026-05-25 22:11:19 | INFO  | cd434a38 | system               | RAG_service 初始化完成 | 嵌入 + 重排序 + BM25 模型已就绪 | 嵌入 + 重排序 + BM25 模型已就绪
+2026-05-25 22:11:55 | INFO  | cd434a38 | system               | 初始化 Memory Embedder (冷启动) | model=BAAI/bge-large-zh-v1.5 | model=BAAI/bge-large-zh-v1.5
+2026-05-25 22:15:25 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-25 22:17:01 | INFO  | -        | system               | 系统关闭 | 服务正在关闭 | 服务正在关闭
+2026-05-25 22:17:21 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-25 22:20:57 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.007s | status=200 | elapsed=0.007s
+2026-05-25 22:21:27 | INFO  | b2343ec2 | system               | 初始化 RAG_service (冷启动) | 首次加载嵌入模型 + 重排序模型 + BM25 编码器 | 首次加载嵌入模型 + 重排序模型 + BM25 编码器
+2026-05-25 22:21:56 | INFO  | b2343ec2 | system               | RAG_service 初始化完成 | 嵌入 + 重排序 + BM25 模型已就绪 | 嵌入 + 重排序 + BM25 模型已就绪
+2026-05-25 22:22:40 | INFO  | b2343ec2 | system               | 初始化 Memory Embedder (冷启动) | model=BAAI/bge-large-zh-v1.5 | model=BAAI/bge-large-zh-v1.5
+2026-05-25 22:39:22 | INFO  | -        | system               | 系统关闭 | 服务正在关闭 | 服务正在关闭
+2026-05-25 22:39:57 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-25 22:39:57 | INFO  | -        | system               | 系统关闭 | 服务正在关闭 | 服务正在关闭
+2026-05-25 22:40:20 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-25 22:40:21 | INFO  | -        | system               | 系统关闭 | 服务正在关闭 | 服务正在关闭
+2026-05-25 22:40:40 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-25 22:40:51 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.008s | status=200 | elapsed=0.008s
+2026-05-25 22:41:26 | INFO  | 61a8283f | system               | 初始化 RAG_service (冷启动) | 首次加载嵌入模型 + 重排序模型 + BM25 编码器 | 首次加载嵌入模型 + 重排序模型 + BM25 编码器
+2026-05-25 22:41:55 | INFO  | 61a8283f | system               | RAG_service 初始化完成 | 嵌入 + 重排序 + BM25 模型已就绪 | 嵌入 + 重排序 + BM25 模型已就绪
+2026-05-25 22:42:22 | INFO  | -        | system               | GET /docs | status=200 | elapsed=0.001s | status=200 | elapsed=0.001s
+2026-05-25 22:42:26 | INFO  | -        | system               | GET /openapi.json | status=200 | elapsed=0.081s | status=200 | elapsed=0.081s
+2026-05-25 22:42:52 | INFO  | -        | system               | GET //ask/stream | status=404 | elapsed=0.000s | status=404 | elapsed=0.000s
+2026-05-25 22:42:52 | INFO  | -        | system               | GET /favicon.ico | status=404 | elapsed=0.001s | status=404 | elapsed=0.001s
+2026-05-25 22:43:00 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.003s | status=200 | elapsed=0.003s
+2026-05-25 22:43:02 | INFO  | -        | system               | GET /favicon.ico | status=404 | elapsed=0.000s | status=404 | elapsed=0.000s
+2026-05-25 22:44:20 | INFO  | 980025b9 | system               | 初始化 Memory Embedder (冷启动) | model=BAAI/bge-large-zh-v1.5 | model=BAAI/bge-large-zh-v1.5
+2026-05-25 22:44:35 | INFO  | -        | system               | GET /docs | status=200 | elapsed=0.000s | status=200 | elapsed=0.000s
+2026-05-25 22:44:36 | INFO  | -        | system               | GET /openapi.json | status=200 | elapsed=0.000s | status=200 | elapsed=0.000s
+2026-05-25 22:49:52 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.003s | status=200 | elapsed=0.003s
+2026-05-25 22:50:24 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.003s | status=200 | elapsed=0.003s
+2026-05-25 22:55:24 | INFO  | -        | system               | 系统关闭 | 服务正在关闭 | 服务正在关闭
+2026-05-25 22:55:51 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-25 22:57:01 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.006s | status=200 | elapsed=0.006s
+2026-05-25 22:57:41 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.003s | status=200 | elapsed=0.003s
+2026-05-25 22:57:55 | INFO  | 60677efc | system               | 初始化 RAG_service (冷启动) | 首次加载嵌入模型 + 重排序模型 + BM25 编码器 | 首次加载嵌入模型 + 重排序模型 + BM25 编码器
+2026-05-25 22:58:25 | INFO  | 60677efc | system               | RAG_service 初始化完成 | 嵌入 + 重排序 + BM25 模型已就绪 | 嵌入 + 重排序 + BM25 模型已就绪
+2026-05-25 22:59:09 | INFO  | 60677efc | system               | 初始化 Memory Embedder (冷启动) | model=BAAI/bge-large-zh-v1.5 | model=BAAI/bge-large-zh-v1.5
