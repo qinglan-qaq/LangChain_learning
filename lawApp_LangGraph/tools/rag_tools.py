@@ -176,6 +176,27 @@ INCORRECT_THRESHOLD = 0.2
 MIN_QUALITY_DOCS = 3
 
 
+def _to_simple_doc(doc) -> simpleRetrievedDocument:
+    """将 dict 或对象转换为 simpleRetrievedDocument."""
+    if isinstance(doc, simpleRetrievedDocument):
+        return doc
+    if isinstance(doc, dict):
+        return simpleRetrievedDocument(
+            id=doc.get("id", ""),
+            year=str(doc.get("year", "")),
+            case_number=doc.get("case_number", ""),
+            case_cause=doc.get("case_cause", ""),
+            chunk_text=doc.get("chunk_text", ""),
+        )
+    return simpleRetrievedDocument(
+        id=getattr(doc, "id", ""),
+        year=str(getattr(doc, "year", "")),
+        case_number=getattr(doc, "case_number", ""),
+        case_cause=getattr(doc, "case_cause", ""),
+        chunk_text=getattr(doc, "chunk_text", ""),
+    )
+
+
 @tool
 @traceable(run_type="tool", name="tool_案例相关性评估")
 def evaluate_case_relevance(
@@ -220,13 +241,7 @@ def evaluate_case_relevance(
 
     for doc in documents:
         score = doc.get("hybrid_score")
-        sdoc = simpleRetrievedDocument(
-            id=doc.get("id", ""),
-            year=str(doc.get("year", "")),
-            case_number=doc.get("case_number", ""),
-            case_cause=doc.get("case_cause", ""),
-            chunk_text=doc.get("chunk_text", ""),
-        )
+        sdoc = _to_simple_doc(doc)
         if score >= CORRECT_THRESHOLD:
             correct.append(sdoc)
         elif score >= INCORRECT_THRESHOLD:
@@ -336,185 +351,110 @@ LEGAL_ANALYSIS_PROMPT_Saul = PromptTemplate.from_template(
 )
 
 
-def _extract_doc_fields(doc) -> tuple:
-    """从 dict 或 simpleRetrievedDocument 中提取案号、年份、文本."""
-    if isinstance(doc, dict):
-        return (
-            doc.get("case_number", ""),
-            str(doc.get("year", "")),
-            doc.get("chunk_text", ""),
-        )
-    return (
-        getattr(doc, "case_number", ""),
-        str(getattr(doc, "year", "")),
-        getattr(doc, "chunk_text", ""),
-    )
+def _resolve_prompts_record(prompts_record: Any) -> PromptsRecord:
+    """将 dict 或 PromptsRecord 统一转为 PromptsRecord,容错空值."""
+    if prompts_record is None:
+        return PromptsRecord()
+    if isinstance(prompts_record, dict):
+        return PromptsRecord(**prompts_record)
+    if isinstance(prompts_record, PromptsRecord):
+        return prompts_record
+    return PromptsRecord()
 
 
-def _to_simple_doc(doc) -> simpleRetrievedDocument:
-    """将 dict 或对象转换为 simpleRetrievedDocument."""
-    if isinstance(doc, simpleRetrievedDocument):
-        return doc
-    if isinstance(doc, dict):
-        return simpleRetrievedDocument(
-            id=doc.get("id", ""),
-            year=str(doc.get("year", "")),
-            case_number=doc.get("case_number", ""),
-            case_cause=doc.get("case_cause", ""),
-            chunk_text=doc.get("chunk_text", ""),
+def _build_analysis_context(pr: PromptsRecord) -> str:
+    """从 PromptsRecord 的 web/law/case 字段拼装提示词上下文."""
+    parts: list[str] = []
+
+    for law in pr.laws_results:
+        parts.append(
+            f"法条: {law.law_title}章节{law.chapter} 第{law.article_number}条\n{law.content}"
         )
-    return simpleRetrievedDocument(
-        id=getattr(doc, "id", ""),
-        year=str(getattr(doc, "year", "")),
-        case_number=getattr(doc, "case_number", ""),
-        case_cause=getattr(doc, "case_cause", ""),
-        chunk_text=getattr(doc, "chunk_text", ""),
-    )
+
+    for doc in pr.evluate_retrieved_documents:
+        parts.append(
+            f"[参考案例 | 案号:{doc.case_number} | {doc.year}年]\n案件内容:{doc.chunk_text}"
+        )
+
+    for item in pr.web_search_results:
+        snippet = item.snippet or ""
+        parts.append(f"[外部网络资料]\n{snippet}")
+
+    return "\n\n---\n\n".join(parts) if parts else "暂无相关资料"
 
 
 @tool
 @traceable(run_type="tool", name="tool_法律问题分析")
 async def analyze_legal_issue(
     query: str,
-    correct_cases: Optional[list[dict[str, Any]]] = None,
-    ambiguous_cases: Optional[list[dict[str, Any]]] = None,
-    web_results: Optional[List[str]] = None,
-    law_results: Optional[List[dict[str, Any]]] = None,
+    prompts_record: Any = None,
+    **kwargs: Any,
 ) -> dict:
     """基于法律案例、法律条文和网络资料,生成专业的法律分析和建议.
-    整合高质量案例、中等相关案例、相关法条和外部网络资料作为分析依据.
 
-    典型调用流程:
-    1. 先调用 retrieve_legal_knowledge 获取案例列表
-    2. 再调用 evaluate_case_relevance 评估质量
-    3. 如需要法律条文依据,调用 fetch_laws 获取相关法条原文
-    4. 如 quality_verdict 为"不足",则调用 get_google_search 联网补充
-    5. 最后调用本工具,传入 correct_cases / ambiguous_cases / law_results / web_results 并生成最终分析
+    优先从 prompts_record (PromptsRecord) 中提取已累积的 web_search_results /
+    evluate_retrieved_documents / laws_results 来构建分析上下文.
 
     参数:
     query: 用户的法律问题
-    correct_cases: 评估为 high-quality 的案例列表(来自 evaluate_case_relevance 的 correct 字段)
-    ambiguous_cases: 评估为 medium-quality 的案例列表(来自 evaluate_case_relevance 的 ambiguous 字段)
-    web_results: 网络搜索结果的文本列表(来自 get_google_search 的返回值),可选
-    law_results: 相关法律条文列表(来自 fetch_laws 的 law_results 字段)
+    prompts_record: Executor 累积的 PromptsRecord,优先使用
 
     返回:
     结构化 dict,含 final_answer / final_prompt / prompts_record
     """
     t0 = time.time()
-    correct_n = len(correct_cases or [])
-    ambig_n = len(ambiguous_cases or [])
-    web_n = len(web_results or [])
-    law_n = len(law_results or [])
+
+    # ── 解析 PromptsRecord ──
+    pr = _resolve_prompts_record(prompts_record)
+
+    case_n = len(pr.evluate_retrieved_documents)
+    web_n = len(pr.web_search_results)
+    law_n = len(pr.laws_results)
+
     tool_log.info(
         "→ 调用工具: analyze_legal_issue",
-        detail=f"query={query[:60]} | correct={correct_n} | ambiguous={ambig_n} | web={web_n} | law={law_n}",
+        detail=f"query={query[:60]} | cases={case_n}条 | web={web_n}条 | law={law_n}条",
     )
 
-    llm = _get_llm()
-
-    correct_cases = correct_cases or []
-    ambiguous_cases = ambiguous_cases or []
-    web_results = web_results or []
-    law_results = law_results or []
-
-    # ── 构建 PromptsRecord 的三个类型化列表 ──
-
-    laws_for_record: list[LawsResult] = []
-    for law in law_results:
-        if isinstance(law, dict):
-            laws_for_record.append(LawsResult(
-                law_title=law.get("law_title", ""),
-                chapter=law.get("chapter", ""),
-                article_number=law.get("article_number", ""),
-                content=law.get("content", ""),
-            ))
-        else:
-            laws_for_record.append(law)
-
-    eval_docs_for_record: list[simpleRetrievedDocument] = []
-    for doc in correct_cases:
-        if doc:
-            eval_docs_for_record.append(_to_simple_doc(doc))
-    for doc in ambiguous_cases:
-        if doc:
-            eval_docs_for_record.append(_to_simple_doc(doc))
-
-    web_for_record: list[WebSearchResult] = []
-    for snippet in web_results:
-        if isinstance(snippet, str):
-            pass  # 纯文本不转为 WebSearchResult,跳过
-        elif isinstance(snippet, dict):
-            web_for_record.append(WebSearchResult(
-                title=snippet.get("title", ""),
-                link=snippet.get("link", ""),
-                snippet=snippet.get("snippet", ""),
-            ))
-        else:
-            web_for_record.append(snippet)
-
-    prompts_record = PromptsRecord(
-        query=query,
-        web_search_results=web_for_record,
-        evluate_retrieved_documents=eval_docs_for_record,
-        laws_results=laws_for_record,
-    )
-
-    # ── 从 PromptsRecord 各字段拼装 context → 注入模板 → final_prompt ──
-
-    context_lines: list[str] = []
-
-    for law in prompts_record.laws_results:
-        context_lines.append(
-            f"法条: {law.law_title} 第{law.article_number}条\n{law.content}"
-        )
-
-    for doc in correct_cases:
-        if doc:
-            cn, yr, chunk_text = _extract_doc_fields(doc)
-            context_lines.append(f"[高相关案例 | 案号:{cn} | {yr}年]\n{chunk_text}")
-    for doc in ambiguous_cases:
-        if doc:
-            cn, yr, chunk_text = _extract_doc_fields(doc)
-            context_lines.append(f"[中等相关案例 | 案号:{cn} | {yr}年]\n{chunk_text}")
-
-    for i, snippet in enumerate(web_results, 1):
-        if isinstance(snippet, str):
-            content = snippet
-        elif isinstance(snippet, dict):
-            content = snippet.get("snippet", snippet.get("content", str(snippet)))
-        else:
-            content = getattr(snippet, "snippet", "") or getattr(snippet, "content", str(snippet))
-        context_lines.append(f"[外部网络资料{i}]\n{content}")
-
-    context = "\n\n---\n\n".join(context_lines) if context_lines else "暂无相关资料"
+    # 获取PromptsRecord中的信息来构建分析上下文
+    context = _build_analysis_context(pr)
 
     rag_log.debug("开始 LLM 法律分析生成", detail=f"context_len={len(context)}")
 
+    llm = _get_llm()
     final_prompt = LEGAL_ANALYSIS_PROMPT_Kim.format(context=context, query=query)
 
     # 流式生成:逐 token 推送到 SSE 队列
     queue = get_stream_queue()
     if queue:
         await queue.put(("status", "正在生成法律分析..."))
+
     answer_parts: list[str] = []
     async for chunk in llm.astream(final_prompt):
-        content = chunk.content if hasattr(chunk, "content") else str(chunk)
+        # 归一化 chunk.content: str | list[str | dict] → str
+        raw = chunk.content if hasattr(chunk, "content") else str(chunk)
+        if isinstance(raw, list):
+            raw = "".join(
+                item.get("text", "") if isinstance(item, dict) else str(item)
+                for item in raw
+            )
+        content = str(raw)
         answer_parts.append(content)
         if queue and content.strip():
             await queue.put(("token", content))
+            
     answer = "".join(answer_parts)
 
     elapsed = time.time() - t0
 
     tool_log.info(
         "← 工具返回: analyze_legal_issue",
-        detail=f"laws={len(prompts_record.laws_results)} | cases={len(prompts_record.evluate_retrieved_documents)} | web={len(prompts_record.web_search_results)}",
+        detail=f"laws={law_n} | cases={case_n} | web={web_n}",
         result=f"answer_len={len(answer)} | elapsed={elapsed:.2f}s",
     )
 
     return {
         "final_answer": answer,
         "final_prompts": final_prompt,
-        "prompts_record": prompts_record,
+        "prompts_record": pr,
     }
