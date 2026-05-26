@@ -28,7 +28,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
-from lawApp_LangGraph.state import AgentState, PlanStep, ToolCallRecord
+from lawApp_LangGraph.state import AgentState, PlanStep, ToolCallRecord, PromptsRecord
 from lawApp_LangGraph.tools import ALL_TOOLS
 from lawApp_LangGraph.FastAPI.logging import debug, flow, tool as tool_log
 from lawApp_LangGraph.FastAPI.utils import get_stream_queue
@@ -118,6 +118,7 @@ _TOOL_FALLBACK_ARGS = {
         ],
         "web_results": list(s.web_search_results),
         "law_results": list(s.law_results),
+        "prompts_record": s.prompts_record.model_dump() if s.prompts_record else None,
     },
     "markdown_to_pdf": lambda s: {
         "markdown_text": s.final_answer or "暂无内容",
@@ -284,6 +285,7 @@ EXECUTOR_PROMPT = """
 上下文数据:
 - 已检索案例: {rag_summary}
 - 案例评估: {eval_summary}
+- 检索法条: {law_summary}
 - 网络搜索: {web_summary}
 
 规则:
@@ -316,7 +318,9 @@ async def executor_node(state: AgentState) -> dict:
     # 推送步骤进度到 SSE 队列
     queue = get_stream_queue()
     if queue:
-        await queue.put(("status", f"执行步骤 {idx + 1}/{total_steps}: {step.description}"))
+        await queue.put(
+            ("status", f"执行步骤 {idx + 1}/{total_steps}: {step.description}")
+        )
 
     # 无工具步骤 → 跳过
     if not step.tool_name:
@@ -358,6 +362,14 @@ async def executor_node(state: AgentState) -> dict:
                 parts.append(f"[{title}] {snippet[:80]}...")
             web_summary = " | ".join(parts)
 
+        # 法律条文摘要
+        law_summary = "暂无"
+        if state.law_results:
+            law_summary = " | ".join(
+                f"[{law.law_title}] 第{law.article_number}条 {law.content[:80]}..."
+                for law in state.law_results[:5]
+            )
+
         prompt = EXECUTOR_PROMPT.format(
             step_description=step.description,
             tool_name=step.tool_name,
@@ -365,6 +377,7 @@ async def executor_node(state: AgentState) -> dict:
             rag_summary=rag_summary,
             eval_summary=eval_summary,
             web_summary=web_summary,
+            law_summary=law_summary,
         )
 
         debug.debug("Executor 调用 Flash LLM", detail=f"tool={step.tool_name}")
@@ -376,7 +389,9 @@ async def executor_node(state: AgentState) -> dict:
         调用 llm_executor_with_tools.invoke() 
         让 Flash LLM 根据提示词分析当前步骤和上下文,自动提取参数并调用指定工具
         """
-        response = await llm_executor_with_tools.ainvoke([SystemMessage(content=prompt)])
+        response = await llm_executor_with_tools.ainvoke(
+            [SystemMessage(content=prompt)]
+        )
 
         if isinstance(response, AIMessage) and response.tool_calls:
             for tc in response.tool_calls:
@@ -421,6 +436,7 @@ async def executor_node(state: AgentState) -> dict:
         "tool_calls": state.tool_calls,
     }
 
+    # 提取工具结果摘要,推送到 SSE 队列
     tool_result_summary = ""
     if isinstance(tool_output, dict):
         for k, v in tool_output.items():
@@ -454,6 +470,23 @@ async def executor_node(state: AgentState) -> dict:
 
             else:
                 state_updates[k] = v
+
+    # 同步 PromptsRecord: 每步都将累积的 state 数据完整写入,不截断不删减 ──
+    merged_web = state_updates.get("web_search_results", state.web_search_results)
+    merged_law = state_updates.get("law_results", state.law_results)
+    merged_eval = state_updates.get("evaluation", state.evaluation)
+
+    eval_docs_for_record: list = []
+    if merged_eval:
+        eval_docs_for_record = list(merged_eval.correct) + list(merged_eval.ambiguous)
+
+    # 写入完整的 PromptsRecord,供后续分析使用;同时推送更新通知到 SSE 队列
+    state_updates["prompts_record"] = PromptsRecord(
+        query=state.query,
+        web_search_results=list(merged_web) if merged_web else [],
+        laws_results=list(merged_law) if merged_law else [],
+        evluate_retrieved_documents=eval_docs_for_record,
+    )
 
     step.status = "failed" if error_msg else "done"
     state_updates["current_step_index"] = idx + 1
@@ -491,6 +524,7 @@ REPLAN_CHECK_PROMPT = """
 - 检索到的案例数量: {doc_count}
 - 案例质量评估: {quality_verdict}
 - 网络搜索补充: {web_count} 条
+- 法律条文检索: {law_count} 条
 - 执行错误: {error_info}
 
 ## 判断标准
@@ -537,15 +571,22 @@ def replan_check_node(state: AgentState) -> dict:
         )
 
     try:
-        chain = PromptTemplate.from_template(REPLAN_CHECK_PROMPT) | llm_executor | StrOutputParser()
-        raw = chain.invoke({
-            "user_query": state.query,
-            "executed_summary": executed_summary,
-            "doc_count": len(state.rag_documents),
-            "quality_verdict": quality_verdict,
-            "web_count": len(state.web_search_results),
-            "error_info": state.error or "无",
-        })
+        chain = (
+            PromptTemplate.from_template(REPLAN_CHECK_PROMPT)
+            | llm_executor
+            | StrOutputParser()
+        )
+        raw = chain.invoke(
+            {
+                "user_query": state.query,
+                "executed_summary": executed_summary,
+                "doc_count": len(state.rag_documents),
+                "quality_verdict": quality_verdict,
+                "web_count": len(state.web_search_results),
+                "law_count": len(state.law_results),
+                "error_info": state.error or "无",
+            }
+        )
         raw = raw.strip()
 
         # 提取JSON部分,兼容 LLM 输出中夹带文本的情况
@@ -610,6 +651,7 @@ REPLANNER_SYSTEM_PROMPT = """
 - 案例数量: {doc_count}
 - 评估结论: {quality}
 - 网络搜索: {web_count} 条
+- 法律条文: {law_count} 条
 - 错误: {error}
 
 ## 重规划原因
@@ -657,6 +699,7 @@ def replanner_node(state: AgentState) -> dict:
         doc_count=len(state.rag_documents),
         quality=state.evaluation.quality_verdict if state.evaluation else "未评估",
         web_count=len(state.web_search_results),
+        law_count=len(state.law_results),
         error=state.error or "无",
         replan_reason=state.replan_reason or "质量不足",
         available_tools=tools_desc,
@@ -696,6 +739,7 @@ def replanner_node(state: AgentState) -> dict:
             "error": None,
         }
 
+    # 提取补充步骤和思考链
     additional = result.get("additional_steps", [])
     new_reasoning = result.get("reasoning", [])
 
