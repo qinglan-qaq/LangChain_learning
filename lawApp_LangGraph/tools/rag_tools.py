@@ -430,19 +430,26 @@ async def analyze_legal_issue(
         await queue.put(("status", "正在生成法律分析..."))
 
     answer_parts: list[str] = []
+    
+    # 流式调用循环组装答案,并实时推送 token 到前端显示打字机效果
     async for chunk in llm.astream(final_prompt):
-        # 归一化 chunk.content: str | list[str | dict] → str
+        
+        # 类型判断容错:有些 LLM 实现可能直接返回字符串而不是带 content 属性的对象
         raw = chunk.content if hasattr(chunk, "content") else str(chunk)
+        
         if isinstance(raw, list):
             raw = "".join(
                 item.get("text", "") if isinstance(item, dict) else str(item)
                 for item in raw
             )
+
         content = str(raw)
+        
         answer_parts.append(content)
+        
         if queue and content.strip():
             await queue.put(("token", content))
-            
+
     answer = "".join(answer_parts)
 
     elapsed = time.time() - t0

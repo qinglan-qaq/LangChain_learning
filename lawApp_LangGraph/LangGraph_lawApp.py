@@ -397,11 +397,16 @@ async def executor_node(state: AgentState) -> dict:
             for tc in response.tool_calls:
                 called = TOOL_BY_NAME.get(tc["name"])
                 if called:
+                    args = dict(tc["args"])
+                    # analyze_legal_issue 需要完整的 PromptsRecord,
+                    # 但 LLM 无法自行构造,从 state 注入
+                    if tc["name"] == "analyze_legal_issue" and state.prompts_record:
+                        args["prompts_record"] = state.prompts_record.model_dump()
                     debug.debug(
                         "LLM 发起工具调用",
-                        detail=f"tool={tc['name']} | args={str(tc.get('args', {}))[:200]}",
+                        detail=f"tool={tc['name']} | args={str(args)[:200]}",
                     )
-                    tool_output = await called.ainvoke(tc["args"])
+                    tool_output = await called.ainvoke(args)
                     break
         else:
             raise RuntimeError("Flash LLM 未发起工具调用")
@@ -471,7 +476,7 @@ async def executor_node(state: AgentState) -> dict:
             else:
                 state_updates[k] = v
 
-    # 同步 PromptsRecord: 每步都将累积的 state 数据完整写入,不截断不删减 ──
+    # 同步 PromptsRecord: 每步都将累积的 state 数据完整写入
     merged_web = state_updates.get("web_search_results", state.web_search_results)
     merged_law = state_updates.get("law_results", state.law_results)
     merged_eval = state_updates.get("evaluation", state.evaluation)
@@ -489,6 +494,7 @@ async def executor_node(state: AgentState) -> dict:
     )
 
     step.status = "failed" if error_msg else "done"
+    
     state_updates["current_step_index"] = idx + 1
     if error_msg:
         state_updates["error"] = error_msg

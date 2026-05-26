@@ -311,3 +311,21 @@
 2026-05-25 22:57:55 | INFO  | 60677efc | system               | 初始化 RAG_service (冷启动) | 首次加载嵌入模型 + 重排序模型 + BM25 编码器 | 首次加载嵌入模型 + 重排序模型 + BM25 编码器
 2026-05-25 22:58:25 | INFO  | 60677efc | system               | RAG_service 初始化完成 | 嵌入 + 重排序 + BM25 模型已就绪 | 嵌入 + 重排序 + BM25 模型已就绪
 2026-05-25 22:59:09 | INFO  | 60677efc | system               | 初始化 Memory Embedder (冷启动) | model=BAAI/bge-large-zh-v1.5 | model=BAAI/bge-large-zh-v1.5
+2026-05-26 11:48:09 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-26 11:49:41 | INFO  | -        | system               | GET /docs | status=200 | elapsed=0.002s | status=200 | elapsed=0.002s
+2026-05-26 11:49:42 | INFO  | -        | system               | GET /openapi.json | status=200 | elapsed=0.053s | status=200 | elapsed=0.053s
+2026-05-26 11:51:34 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.009s | status=200 | elapsed=0.009s
+2026-05-26 11:51:53 | INFO  | f1c5d0c2 | system               | 初始化 RAG_service (冷启动) | 首次加载嵌入模型 + 重排序模型 + BM25 编码器 | 首次加载嵌入模型 + 重排序模型 + BM25 编码器
+2026-05-26 11:52:18 | INFO  | f1c5d0c2 | system               | RAG_service 初始化完成 | 嵌入 + 重排序 + BM25 模型已就绪 | 嵌入 + 重排序 + BM25 模型已就绪
+2026-05-26 11:52:56 | INFO  | f1c5d0c2 | system               | 初始化 Memory Embedder (冷启动) | model=BAAI/bge-large-zh-v1.5 | model=BAAI/bge-large-zh-v1.5
+2026-05-26 12:17:35 | INFO  | -        | system               | 系统关闭 | 服务正在关闭 | 服务正在关闭
+2026-05-26 12:18:09 | INFO  | -        | system               | 系统启动 | 日志系统已初始化 | Legal Consultation API v2.0.0 | 日志系统已初始化 | Legal Consultation API v2.0.0
+2026-05-26 12:38:17 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.009s | status=200 | elapsed=0.009s
+2026-05-26 12:38:42 | INFO  | -        | system               | GET / | status=404 | elapsed=0.000s | status=404 | elapsed=0.000s
+2026-05-26 12:38:43 | INFO  | -        | system               | GET /favicon.ico | status=404 | elapsed=0.002s | status=404 | elapsed=0.002s
+2026-05-26 12:38:46 | INFO  | 534d787c | system               | 初始化 RAG_service (冷启动) | 首次加载嵌入模型 + 重排序模型 + BM25 编码器 | 首次加载嵌入模型 + 重排序模型 + BM25 编码器
+2026-05-26 12:38:48 | INFO  | -        | system               | GET /ask/stream | status=200 | elapsed=0.004s | status=200 | elapsed=0.004s
+2026-05-26 12:39:13 | INFO  | 534d787c | system               | RAG_service 初始化完成 | 嵌入 + 重排序 + BM25 模型已就绪 | 嵌入 + 重排序 + BM25 模型已就绪
+2026-05-26 12:40:21 | INFO  | b5b2ff36 | system               | 初始化 Memory Embedder (冷启动) | model=BAAI/bge-large-zh-v1.5 | model=BAAI/bge-large-zh-v1.5
+2026-05-26 12:40:22 | INFO  | 534d787c | system               | 初始化 Memory Embedder (冷启动) | model=BAAI/bge-large-zh-v1.5 | model=BAAI/bge-large-zh-v1.5
+2026-05-26 12:50:31 | INFO  | -        | system               | 系统关闭 | 服务正在关闭 | 服务正在关闭
