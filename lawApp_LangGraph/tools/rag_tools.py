@@ -27,6 +27,7 @@ from lawApp_LangGraph.state import (
     LawsResult,
     WebSearchResult,
     simpleRetrievedDocument,
+    EvaluationResult,
     PromptsRecord,
 )
 from lawApp_LangGraph.FastAPI.utils import get_stream_queue
@@ -170,8 +171,8 @@ def retrieve_legal_knowledge(
 
 # Tool 2: 检索质量评估 (CRAG 三档)
 
-CORRECT_THRESHOLD = 0.6
-INCORRECT_THRESHOLD = 0.3
+CORRECT_THRESHOLD = 0.5
+INCORRECT_THRESHOLD = 0.2
 MIN_QUALITY_DOCS = 3
 
 
@@ -181,9 +182,9 @@ def evaluate_case_relevance(
     documents: list[dict[str, Any]],
 ) -> dict:
     """评估检索到的案例与用户问题的相关程度,按评分分为三档:
-    - correct (高质量):     rerank_score >= 0.7,可直接用于法律分析
-    - ambiguous (中等质量): 0.3 <= score < 0.7,可参考但需谨慎
-    - incorrect (低质量):   score < 0.3,不建议使用
+    - correct (高质量):     rerank_score >= 0.5,可直接用于法律分析
+    - ambiguous (中等质量): 0.2 <= score < 0.5,可参考但需谨慎
+    - incorrect (低质量):   score < 0.2,不建议使用
 
     评估报告会明确告知检索质量是否「充足」或「不足,建议进行网络搜索补充」.
     Agent 应据此决定是否调用 get_google_search 进行联网补充.
@@ -209,17 +210,10 @@ def evaluate_case_relevance(
             result="verdict=不足",
         )
         return {
-            "evaluation": {
-                "error": "输入为空,没有可评估的文档",
-                "total": 0,
-                "correct_count": 0,
-                "ambiguous_count": 0,
-                "incorrect_count": 0,
-                "quality_verdict": "不足,建议进行网络搜索补充",
-                "correct": [],
-                "ambiguous": [],
-                "incorrect": [],
-            }
+            "evaluation": EvaluationResult(
+                error="输入为空,没有可评估的文档",
+                quality_verdict="不足,建议进行网络搜索补充",
+            )
         }
 
     correct, ambiguous, incorrect = [], [], []
@@ -253,16 +247,16 @@ def evaluate_case_relevance(
         result=f"verdict={quality_verdict} | elapsed={time.time() - t0:.2f}s",
     )
     return {
-        "evaluation": {
-            "total": len(documents),
-            "correct_count": len(correct),
-            "ambiguous_count": len(ambiguous),
-            "incorrect_count": len(incorrect),
-            "quality_verdict": quality_verdict,
-            "correct": correct,
-            "ambiguous": ambiguous,
-            "incorrect": incorrect,
-        }
+        "evaluation": EvaluationResult(
+            total=len(documents),
+            correct_count=len(correct),
+            ambiguous_count=len(ambiguous),
+            incorrect_count=len(incorrect),
+            quality_verdict=quality_verdict,
+            correct=correct,
+            ambiguous=ambiguous,
+            incorrect=incorrect,
+        )
     }
 
 
